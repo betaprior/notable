@@ -55,7 +55,9 @@ class DropboxClient(
                     val metadata = json.decodeFromString<FileMetadata>(body)
                     AppResult.Success(metadata.rev)
                 } else {
-                    AppResult.Error(DomainError.SyncError("Upload failed: ${response.code} ${response.body.string()}"))
+                    val errBody = response.body.string()
+                    log.e("Upload failed: ${response.code} $errBody")
+                    AppResult.Error(DomainError.SyncError("Upload failed (${response.code}): $errBody"))
                 }
             }
         }
@@ -82,10 +84,14 @@ class DropboxClient(
                     val metadata = json.decodeFromString<FileMetadata>(apiResult)
                     val bytes = response.body.bytes()
                     AppResult.Success(bytes to metadata.rev)
-                } else if (response.code == 409) {
-                    AppResult.Error(DomainError.NotFound("File not found: $path"))
                 } else {
-                    AppResult.Error(DomainError.SyncError("Download failed: ${response.code}"))
+                    val body = response.body.string()
+                    log.e("Download failed: ${response.code} $body")
+                    if (response.code == 409 && body.contains("not_found")) {
+                        AppResult.Error(DomainError.NotFound("File not found: $path"))
+                    } else {
+                        AppResult.Error(DomainError.SyncError("Download failed (${response.code}): $body"))
+                    }
                 }
             }
         }
@@ -108,10 +114,14 @@ class DropboxClient(
                 if (response.isSuccessful) {
                     val metadata = json.decodeFromString<FileMetadata>(response.body.string())
                     AppResult.Success(metadata)
-                } else if (response.code == 409) {
-                    AppResult.Error(DomainError.NotFound("File not found: $path"))
                 } else {
-                    AppResult.Error(DomainError.SyncError("get_metadata failed: ${response.code}"))
+                    val body = response.body.string()
+                    log.e("get_metadata failed: ${response.code} $body")
+                    if (response.code == 409 && body.contains("not_found")) {
+                        AppResult.Error(DomainError.NotFound("File not found: $path"))
+                    } else {
+                        AppResult.Error(DomainError.SyncError("get_metadata failed (${response.code}): $body"))
+                    }
                 }
             }
         }
@@ -134,10 +144,14 @@ class DropboxClient(
                 if (response.isSuccessful) {
                     val result = json.decodeFromString<ListFolderResult>(response.body.string())
                     AppResult.Success(result.entries.filter { it.tag == "file" })
-                } else if (response.code == 409) {
-                    AppResult.Error(DomainError.NotFound("Folder not found: $path"))
                 } else {
-                    AppResult.Error(DomainError.SyncError("list_folder failed: ${response.code}"))
+                    val body = response.body.string()
+                    log.e("list_folder failed: ${response.code} $body")
+                    if (response.code == 409 && body.contains("not_found")) {
+                        AppResult.Error(DomainError.NotFound("Folder not found: $path"))
+                    } else {
+                        AppResult.Error(DomainError.SyncError("list_folder failed (${response.code}): $body"))
+                    }
                 }
             }
         }

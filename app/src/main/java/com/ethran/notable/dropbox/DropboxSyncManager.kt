@@ -180,6 +180,7 @@ class DropboxSyncManager @Inject constructor(
                 )
             }
 
+            log.i("Starting download: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId})")
             _state.value = DropboxSyncState.Syncing("Downloading ${entry.title}...")
 
             val client = createClient(settings)
@@ -253,30 +254,37 @@ class DropboxSyncManager @Inject constructor(
             return@withContext AppResult.Error(DomainError.SyncAuthError)
         }
 
+        log.i("Starting upload: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId}, lastRev=${entry.lastSyncedRev})")
         _state.value = DropboxSyncState.Syncing("Uploading ${entry.title}...")
 
         val client = createClient(settings)
 
         // Check for conflicts via rev
         if (entry.lastSyncedRev.isNotBlank()) {
+            log.i("Checking rev for ${entry.dropboxPath}: local=${entry.lastSyncedRev}")
             when (val metaResult = client.getMetadata(entry.dropboxPath)) {
                 is AppResult.Success -> {
-                    if (metaResult.data.rev != entry.lastSyncedRev) {
-                        _state.value = DropboxSyncState.Error(
-                            "Conflict: file was modified on Dropbox since last sync"
-                        )
+                    val remoteRev = metaResult.data.rev
+                    log.i("Remote rev=$remoteRev, local rev=${entry.lastSyncedRev}")
+                    if (remoteRev != entry.lastSyncedRev) {
+                        val msg = "Conflict on ${entry.title}: local rev=${entry.lastSyncedRev}, remote rev=$remoteRev"
+                        log.w(msg)
+                        _state.value = DropboxSyncState.Error(msg)
                         return@withContext AppResult.Error(
                             DomainError.SyncConflict
                         )
                     }
                 }
                 is AppResult.Error -> {
+                    log.i("get_metadata for ${entry.dropboxPath}: ${metaResult.error.userMessage}")
                     if (metaResult.error !is DomainError.NotFound) {
                         _state.value = DropboxSyncState.Error(metaResult.error.userMessage)
                         return@withContext AppResult.Error(metaResult.error)
                     }
                 }
             }
+        } else {
+            log.i("No lastSyncedRev for ${entry.dropboxPath}, skipping conflict check")
         }
 
         // Export to bytes, using format-aware writer
