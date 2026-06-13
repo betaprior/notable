@@ -86,6 +86,7 @@ data class ToolbarUiState(
     val penSettings: Map<String, PenSetting> = DEFAULT_PEN_SETTINGS,
     val isSelectionActive: Boolean = false,
     val hasClipboard: Boolean = false,
+    val hasDropboxLink: Boolean = false,
     val isDrawing: Boolean = true,
     val isQuickNavOpen: Boolean = false,
 ) {
@@ -129,6 +130,8 @@ sealed class ToolbarAction {
 
     object CloseAllMenus : ToolbarAction()
     data class UpdateQuickNavOpen(val isOpen: Boolean) : ToolbarAction()
+
+    object SaveToDropbox : ToolbarAction()
 }
 
 
@@ -154,6 +157,7 @@ sealed class EditorUiEvent {
     data class NavigateToLibrary(val folderId: String?) : EditorUiEvent()
     data class NavigateToPages(val bookId: String) : EditorUiEvent()
     object NavigateToBugReport : EditorUiEvent()
+    object SaveToDropbox : EditorUiEvent()
 }
 
 // --------------------------------------------------------
@@ -170,7 +174,8 @@ class EditorViewModel @Inject constructor(
     private val syncOrchestrator: SyncOrchestrator,
     val snackDispatcher: SnackDispatcher,
     private val historyFactory: History.Factory,
-    @param:ApplicationScope private val appScope: CoroutineScope
+    @param:ApplicationScope private val appScope: CoroutineScope,
+    private val dropboxSyncManager: com.ethran.notable.dropbox.DropboxSyncManager
 ) : ViewModel() {
     // ---- Toolbar / UI State (single flat flow) ----
     private val _toolbarState = MutableStateFlow(ToolbarUiState())
@@ -304,6 +309,8 @@ class EditorViewModel @Inject constructor(
                 _toolbarState.update { it.copy(isQuickNavOpen = action.isOpen) }
                 updateDrawingState()
             }
+
+            ToolbarAction.SaveToDropbox -> sendUiEvent(EditorUiEvent.SaveToDropbox)
         }
     }
 
@@ -501,6 +508,8 @@ class EditorViewModel @Inject constructor(
             else -> 0
         }
 
+        val hasDropbox = bookId != null && dropboxSyncManager.isDropboxLinked(bookId)
+
         _toolbarState.update {
             it.copy(
                 notebookId = bookId,
@@ -510,7 +519,8 @@ class EditorViewModel @Inject constructor(
                 currentPageNumber = pageIndex,
                 backgroundType = page.backgroundType,
                 backgroundPath = page.background,
-                backgroundPageNumber = bgPageNumber
+                backgroundPageNumber = bgPageNumber,
+                hasDropboxLink = hasDropbox
             )
         }
     }
@@ -671,6 +681,28 @@ class EditorViewModel @Inject constructor(
     private fun sendCanvasCommand(command: CanvasCommand) {
         log.v("sendCanvasCommand: $command")
         viewModelScope.launch { canvasCommandChannel.send(command) }
+    }
+
+    fun handleSaveToDropbox() {
+        val notebookId = bookId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            snackDispatcher.showOrUpdateSnack(SnackConf(text = "Saving to Dropbox...", duration = 2000))
+            val result = dropboxSyncManager.uploadNotebook(
+                notebookId = notebookId,
+                xoppFile = exportEngine.xoppFile,
+                exportTarget = ExportTarget.Book(notebookId)
+            )
+            when (result) {
+                is com.ethran.notable.utils.AppResult.Success -> {
+                    snackDispatcher.showOrUpdateSnack(SnackConf(text = "Saved to Dropbox", duration = 3000))
+                }
+                is com.ethran.notable.utils.AppResult.Error -> {
+                    snackDispatcher.showOrUpdateSnack(
+                        SnackConf(text = "Dropbox save failed: ${result.error.userMessage}", duration = 5000)
+                    )
+                }
+            }
+        }
     }
 
     companion object {

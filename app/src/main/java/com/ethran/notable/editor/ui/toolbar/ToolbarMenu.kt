@@ -118,6 +118,14 @@ private fun ToolbarMenuContent(
             DividerCentered()
         }
 
+        if (uiState.hasDropboxLink) {
+            MenuItem("Save to Dropbox") {
+                onAction(ToolbarAction.SaveToDropbox)
+                onAction(ToolbarAction.ToggleMenu)
+            }
+            DividerCentered()
+        }
+
         MenuItem(stringResource(R.string.clean_all_strokes)) {
             onAction(ToolbarAction.ClearAllStrokes)
             onAction(ToolbarAction.ToggleMenu)

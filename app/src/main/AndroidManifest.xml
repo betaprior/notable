@@ -40,6 +40,14 @@
 
                 <data android:scheme="notable" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="notable" android:host="dropbox-auth" />
+            </intent-filter>
         </activity>
 
         <provider

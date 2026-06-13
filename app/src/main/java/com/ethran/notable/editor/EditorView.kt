@@ -145,6 +145,10 @@ fun EditorView(
                     EditorUiEvent.NavigateToBugReport -> {
                         goToBugReport()
                     }
+
+                    EditorUiEvent.SaveToDropbox -> {
+                        viewModel.handleSaveToDropbox()
+                    }
                 }
             }
         }
