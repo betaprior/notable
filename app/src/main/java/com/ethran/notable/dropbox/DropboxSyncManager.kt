@@ -105,7 +105,7 @@ class DropboxSyncManager @Inject constructor(
      */
     suspend fun disconnect() {
         saveSettings(DropboxSettings())
-        _state.value = DropboxSyncState.Idle
+        restoreConnectedState()
     }
 
     /**
@@ -200,7 +200,7 @@ class DropboxSyncManager @Inject constructor(
                                 val updated = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
                                 DropboxManifest.writeManifest(manifestPath, updated)
 
-                                _state.value = DropboxSyncState.Idle
+                                restoreConnectedState()
                                 AppResult.Success(entry.title)
                             }
                             is AppResult.Error -> {
@@ -279,7 +279,7 @@ class DropboxSyncManager @Inject constructor(
                     val updated = DropboxManifest.updateRev(manifest, entry.dropboxPath, newRev)
                     DropboxManifest.writeManifest(manifestPath, updated)
 
-                    _state.value = DropboxSyncState.Idle
+                    restoreConnectedState()
                     log.i("Uploaded ${entry.title} (rev=$newRev)")
                     AppResult.Success(Unit)
                 }
@@ -324,15 +324,22 @@ class DropboxSyncManager @Inject constructor(
     }
 
     /**
-     * Initialize state based on saved settings.
+     * Restore the Connected state from saved settings.
      */
-    suspend fun initializeState() {
+    private suspend fun restoreConnectedState() {
         val settings = getSettings()
         _state.value = if (settings.enabled && settings.refreshToken.isNotBlank()) {
             DropboxSyncState.Connected(settings.accountName)
         } else {
             DropboxSyncState.Idle
         }
+    }
+
+    /**
+     * Initialize state based on saved settings.
+     */
+    suspend fun initializeState() {
+        restoreConnectedState()
     }
 }
 
