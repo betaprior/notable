@@ -41,7 +41,7 @@ class DropboxClient(
      */
     fun upload(path: String, content: ByteArray): AppResult<String, DomainError> {
         return executeWithRetry {
-            val apiArg = json.encodeToString(UploadArg(path = path))
+            val apiArg = """{"path":"${path.replace("\"", "\\\"")}","mode":{".tag":"overwrite"},"autorename":false,"mute":true}"""
             val request = Request.Builder()
                 .url("https://content.dropboxapi.com/2/files/upload")
                 .post(content.toRequestBody("application/octet-stream".toMediaType()))
