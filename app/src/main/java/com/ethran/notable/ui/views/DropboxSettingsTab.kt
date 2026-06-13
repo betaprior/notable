@@ -146,12 +146,7 @@ fun DropboxSettingsTab() {
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Filelist: ${syncManager.filelistPath}",
-                style = MaterialTheme.typography.caption,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
-            )
-            Text(
-                text = "Manifest: ${syncManager.manifestPath}",
+                text = "Filelist: Dropbox:${syncManager.filelistDropboxPath}",
                 style = MaterialTheme.typography.caption,
                 color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
             )

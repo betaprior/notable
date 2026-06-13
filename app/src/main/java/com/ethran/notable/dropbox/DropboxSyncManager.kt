@@ -35,21 +35,18 @@ class DropboxSyncManager @Inject constructor(
     // Stored during auth flow between initiating and receiving the callback
     private var pendingCodeVerifier: String? = null
 
-    private val notesSyncDir: String
+    // Manifest stored locally on device in app files dir
+    private val localSyncDir: String
         get() {
-            // Try common Dropbox locations
-            val home = System.getenv("HOME") ?: "/storage/emulated/0"
-            val candidates = listOf(
-                "$home/Dropbox/notes-sync",
-                "/storage/emulated/0/Dropbox/notes-sync",
-                "/sdcard/Dropbox/notes-sync"
-            )
-            return candidates.firstOrNull { File(it).exists() }
-                ?: "$home/Dropbox/notes-sync"
+            val dir = File(context.filesDir, "dropbox-sync")
+            if (!dir.exists()) dir.mkdirs()
+            return dir.absolutePath
         }
 
-    val manifestPath: String get() = "$notesSyncDir/manifest.json"
-    val filelistPath: String get() = "$notesSyncDir/filelist.txt"
+    val manifestPath: String get() = "$localSyncDir/manifest.json"
+
+    // filelist.txt lives on Dropbox at /notes-sync/filelist.txt
+    val filelistDropboxPath: String = "/notes-sync/filelist.txt"
 
     /**
      * Start the OAuth2 PKCE authorization flow.
@@ -112,26 +109,48 @@ class DropboxSyncManager @Inject constructor(
     }
 
     /**
-     * Re-scan filelist.txt and update the manifest.
+     * Fetch filelist.txt from Dropbox and update the local manifest.
      * @return number of new entries added
      */
     suspend fun rescanFileList(): AppResult<Int, DomainError> = withContext(Dispatchers.IO) {
-        try {
-            val paths = DropboxManifest.readFileList(filelistPath)
-            if (paths.isEmpty()) {
-                return@withContext AppResult.Error(
-                    DomainError.SyncError("filelist.txt is empty or not found at $filelistPath")
-                )
-            }
+        val settings = getSettings()
+        if (!settings.enabled || settings.accessToken.isBlank()) {
+            return@withContext AppResult.Error(DomainError.SyncAuthError)
+        }
 
+        val client = createClient(settings)
+
+        // Download filelist.txt from Dropbox
+        val downloadResult = client.download(filelistDropboxPath)
+        if (downloadResult is AppResult.Error) {
+            return@withContext AppResult.Error(
+                DomainError.SyncError("Failed to download filelist.txt from Dropbox: ${downloadResult.error.userMessage}")
+            )
+        }
+
+        val (bytes, _) = (downloadResult as AppResult.Success).data
+        val content = bytes.decodeToString()
+
+        // Parse the file list
+        val paths = content.lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.startsWith("#") }
+
+        if (paths.isEmpty()) {
+            return@withContext AppResult.Error(
+                DomainError.SyncError("filelist.txt on Dropbox is empty (at $filelistDropboxPath)")
+            )
+        }
+
+        try {
             val manifest = DropboxManifest.readManifest(manifestPath)
             val (updated, newCount) = DropboxManifest.mergeFileList(manifest, paths)
             DropboxManifest.writeManifest(manifestPath, updated)
 
-            log.i("Rescanned filelist: ${paths.size} paths, $newCount new entries")
+            log.i("Rescanned filelist from Dropbox: ${paths.size} paths, $newCount new entries")
             AppResult.Success(newCount)
         } catch (e: Exception) {
-            AppResult.Error(DomainError.SyncError("Failed to rescan: ${e.message}"))
+            AppResult.Error(DomainError.SyncError("Failed to update manifest: ${e.message}"))
         }
     }
 
