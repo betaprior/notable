@@ -1,6 +1,6 @@
 package com.ethran.notable.dropbox
 
-import io.shipbook.shipbooksdk.ShipBook
+import android.util.Log
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -12,7 +12,7 @@ import java.util.UUID
  * and is generated/updated from filelist.txt in the same directory.
  */
 object DropboxManifest {
-    private val log = ShipBook.getLogger("DropboxManifest")
+    private const val TAG = "DropboxManifest"
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
     @Serializable
@@ -39,7 +39,7 @@ object DropboxManifest {
         return try {
             json.decodeFromString<Manifest>(file.readText())
         } catch (e: Exception) {
-            log.e("Failed to read manifest: ${e.message}")
+            Log.e(TAG,"Failed to read manifest: ${e.message}")
             Manifest()
         }
     }

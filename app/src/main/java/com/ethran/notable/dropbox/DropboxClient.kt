@@ -2,7 +2,7 @@ package com.ethran.notable.dropbox
 
 import com.ethran.notable.utils.AppResult
 import com.ethran.notable.utils.DomainError
-import io.shipbook.shipbooksdk.ShipBook
+import android.util.Log
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,7 +23,7 @@ class DropboxClient(
     private val refreshToken: String,
     private val onTokenRefreshed: (newAccessToken: String) -> Unit = {}
 ) {
-    private val log = ShipBook.getLogger("DropboxClient")
+    private val TAG = "DropboxClient"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -56,7 +56,7 @@ class DropboxClient(
                     AppResult.Success(metadata.rev)
                 } else {
                     val errBody = response.body.string()
-                    log.e("Upload failed: ${response.code} $errBody")
+                    Log.e(TAG,"Upload failed: ${response.code} $errBody")
                     AppResult.Error(DomainError.SyncError("Upload failed (${response.code}): $errBody"))
                 }
             }
@@ -86,7 +86,7 @@ class DropboxClient(
                     AppResult.Success(bytes to metadata.rev)
                 } else {
                     val body = response.body.string()
-                    log.e("Download failed: ${response.code} $body")
+                    Log.e(TAG,"Download failed: ${response.code} $body")
                     if (response.code == 409 && body.contains("not_found")) {
                         AppResult.Error(DomainError.NotFound("File not found: $path"))
                     } else {
@@ -116,7 +116,7 @@ class DropboxClient(
                     AppResult.Success(metadata)
                 } else {
                     val body = response.body.string()
-                    log.e("get_metadata failed: ${response.code} $body")
+                    Log.e(TAG,"get_metadata failed: ${response.code} $body")
                     if (response.code == 409 && body.contains("not_found")) {
                         AppResult.Error(DomainError.NotFound("File not found: $path"))
                     } else {
@@ -146,7 +146,7 @@ class DropboxClient(
                     AppResult.Success(result.entries.filter { it.tag == "file" })
                 } else {
                     val body = response.body.string()
-                    log.e("list_folder failed: ${response.code} $body")
+                    Log.e(TAG,"list_folder failed: ${response.code} $body")
                     if (response.code == 409 && body.contains("not_found")) {
                         AppResult.Error(DomainError.NotFound("Folder not found: $path"))
                     } else {
@@ -198,12 +198,12 @@ class DropboxClient(
                     val tokenResponse = json.decodeFromString<TokenResponse>(response.body.string())
                     accessToken = tokenResponse.accessToken
                     onTokenRefreshed(accessToken)
-                    log.i("Access token refreshed successfully")
+                    Log.i(TAG,"Access token refreshed successfully")
                     return true
                 }
             }
         } catch (e: Exception) {
-            log.e("Token refresh failed: ${e.message}")
+            Log.e(TAG,"Token refresh failed: ${e.message}")
         }
         return false
     }

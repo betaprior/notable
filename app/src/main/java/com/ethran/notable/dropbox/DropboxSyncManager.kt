@@ -11,7 +11,7 @@ import com.ethran.notable.utils.AppResult
 import com.ethran.notable.utils.DomainError
 import com.ethran.notable.utils.onFailure
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.shipbook.shipbooksdk.ShipBook
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +28,7 @@ class DropboxSyncManager @Inject constructor(
     private val importEngine: ImportEngine,
     private val xoppFile: XoppFile,
 ) {
-    private val log = ShipBook.getLogger("DropboxSyncManager")
+    private val TAG = "DropboxSyncManager"
 
     private val _state = MutableStateFlow<DropboxSyncState>(DropboxSyncState.Idle)
     val state: StateFlow<DropboxSyncState> = _state.asStateFlow()
@@ -148,7 +148,7 @@ class DropboxSyncManager @Inject constructor(
             val (updated, newCount) = DropboxManifest.mergeFileList(manifest, paths)
             DropboxManifest.writeManifest(manifestPath, updated)
 
-            log.i("Rescanned filelist from Dropbox: ${paths.size} paths, $newCount new entries")
+            Log.i(TAG,"Rescanned filelist from Dropbox: ${paths.size} paths, $newCount new entries")
             AppResult.Success(newCount)
         } catch (e: Exception) {
             AppResult.Error(DomainError.SyncError("Failed to update manifest: ${e.message}"))
@@ -180,7 +180,7 @@ class DropboxSyncManager @Inject constructor(
                 )
             }
 
-            log.i("Starting download: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId})")
+            Log.i(TAG,"Starting download: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId})")
             _state.value = DropboxSyncState.Syncing("Downloading ${entry.title}...")
 
             val client = createClient(settings)
@@ -254,21 +254,21 @@ class DropboxSyncManager @Inject constructor(
             return@withContext AppResult.Error(DomainError.SyncAuthError)
         }
 
-        log.i("Starting upload: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId}, lastRev=${entry.lastSyncedRev})")
+        Log.i(TAG,"Starting upload: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId}, lastRev=${entry.lastSyncedRev})")
         _state.value = DropboxSyncState.Syncing("Uploading ${entry.title}...")
 
         val client = createClient(settings)
 
         // Check for conflicts via rev
         if (entry.lastSyncedRev.isNotBlank()) {
-            log.i("Checking rev for ${entry.dropboxPath}: local=${entry.lastSyncedRev}")
+            Log.i(TAG,"Checking rev for ${entry.dropboxPath}: local=${entry.lastSyncedRev}")
             when (val metaResult = client.getMetadata(entry.dropboxPath)) {
                 is AppResult.Success -> {
                     val remoteRev = metaResult.data.rev
-                    log.i("Remote rev=$remoteRev, local rev=${entry.lastSyncedRev}")
+                    Log.i(TAG,"Remote rev=$remoteRev, local rev=${entry.lastSyncedRev}")
                     if (remoteRev != entry.lastSyncedRev) {
                         val msg = "Conflict on ${entry.title}: local rev=${entry.lastSyncedRev}, remote rev=$remoteRev"
-                        log.w(msg)
+                        Log.w(TAG,msg)
                         _state.value = DropboxSyncState.Error(msg)
                         return@withContext AppResult.Error(
                             DomainError.SyncConflict
@@ -276,7 +276,7 @@ class DropboxSyncManager @Inject constructor(
                     }
                 }
                 is AppResult.Error -> {
-                    log.i("get_metadata for ${entry.dropboxPath}: ${metaResult.error.userMessage}")
+                    Log.i(TAG,"get_metadata for ${entry.dropboxPath}: ${metaResult.error.userMessage}")
                     if (metaResult.error !is DomainError.NotFound) {
                         _state.value = DropboxSyncState.Error(metaResult.error.userMessage)
                         return@withContext AppResult.Error(metaResult.error)
@@ -284,7 +284,7 @@ class DropboxSyncManager @Inject constructor(
                 }
             }
         } else {
-            log.i("No lastSyncedRev for ${entry.dropboxPath}, skipping conflict check")
+            Log.i(TAG,"No lastSyncedRev for ${entry.dropboxPath}, skipping conflict check")
         }
 
         // Export to bytes, using format-aware writer
@@ -304,7 +304,7 @@ class DropboxSyncManager @Inject constructor(
                     DropboxManifest.writeManifest(manifestPath, updated)
 
                     restoreConnectedState()
-                    log.i("Uploaded ${entry.title} (rev=$newRev)")
+                    Log.i(TAG,"Uploaded ${entry.title} (rev=$newRev)")
                     AppResult.Success(Unit)
                 }
                 is AppResult.Error -> {
