@@ -221,18 +221,24 @@ fun DropboxSettingsTab() {
                         }
 
                         if (syncState is DropboxSyncState.Connected) {
+                            val alreadyImported = entry.lastSyncedRev.isNotBlank()
                             EInkActionButton(
-                                text = "Import",
+                                text = if (alreadyImported) "Re-import" else "Import",
                                 onClick = {
                                     scope.launch {
-                                        val result = syncManager.downloadAndImport(entry)
+                                        val result = syncManager.downloadAndImport(entry, force = alreadyImported)
                                         statusMessage = when (result) {
-                                            is AppResult.Success -> "Imported: ${result.data}"
-                                            is AppResult.Error -> "Import failed: ${result.error.userMessage}"
+                                            is AppResult.Success -> {
+                                                withContext(Dispatchers.IO) {
+                                                    manifestEntries = syncManager.getManifestEntries()
+                                                }
+                                                "Imported: ${result.data}"
+                                            }
+                                            is AppResult.Error -> result.error.userMessage
                                         }
                                     }
                                 },
-                                isSecondary = true,
+                                isSecondary = alreadyImported,
                                 fontSize = 11.sp
                             )
                         }

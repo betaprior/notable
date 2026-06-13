@@ -164,11 +164,19 @@ class DropboxSyncManager @Inject constructor(
     /**
      * Download a file from Dropbox and import it into Notable.
      */
-    suspend fun downloadAndImport(entry: DropboxManifest.ManifestEntry): AppResult<String, DomainError> =
+    suspend fun downloadAndImport(entry: DropboxManifest.ManifestEntry, force: Boolean = false): AppResult<String, DomainError> =
         withContext(Dispatchers.IO) {
             val settings = getSettings()
             if (!settings.enabled || settings.accessToken.isBlank()) {
                 return@withContext AppResult.Error(DomainError.SyncAuthError)
+            }
+
+            // Check if already imported (has a rev from a previous successful import)
+            if (!force && entry.lastSyncedRev.isNotBlank()) {
+                restoreConnectedState()
+                return@withContext AppResult.Error(
+                    DomainError.SyncError("'${entry.title}' already imported. Use force to re-import.")
+                )
             }
 
             _state.value = DropboxSyncState.Syncing("Downloading ${entry.title}...")
