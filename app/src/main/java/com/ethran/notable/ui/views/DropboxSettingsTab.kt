@@ -51,7 +51,8 @@ fun DropboxSettingsTab() {
     }
     val syncManager = remember { entryPoint.dropboxSyncManager() }
     val syncState by syncManager.state.collectAsState()
-    val scope = rememberCoroutineScope()
+    // Use a stable scope that won't be cancelled on recomposition
+    val scope = remember { kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()) }
 
     var manifestEntries by remember { mutableStateOf<List<DropboxManifest.ManifestEntry>>(emptyList()) }
     var statusMessage by remember { mutableStateOf<String?>(null) }

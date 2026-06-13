@@ -141,8 +141,9 @@ class ImportEngine @Inject constructor(
                 bookRepo.addPage(book.id, pageData.page.id)
                 importedPageIds.add(pageData.page.id)
             } catch (e: Exception) {
-                val errMessage = "failed import book  ${e.message}"
-                appEventBus.emit(AppEvent.LogMessage("importBook", errMessage))
+                val errMessage = "failed import book: ${e.message}"
+                log.e(errMessage)
+                appEventBus.tryEmit(AppEvent.LogMessage("importBook", errMessage))
                 val error = DomainError.DatabaseError(errMessage)
                 persistentError = persistentError?.let { it + error } ?: error
             }
@@ -185,8 +186,9 @@ class ImportEngine @Inject constructor(
                 bookRepo.addPage(book.id, pageData.page.id)
                 importedPageIds.add(pageData.page.id)
             } catch (e: Exception) {
-                val errMessage = "failed import book  ${e.message}"
-                appEventBus.emit(AppEvent.LogMessage("importBook", errMessage))
+                val errMessage = "failed import book: ${e.message}"
+                log.e(errMessage)
+                appEventBus.tryEmit(AppEvent.LogMessage("importBook", errMessage))
                 val error = DomainError.DatabaseError(errMessage)
                 persistentError = persistentError?.let { it + error } ?: error
             }
