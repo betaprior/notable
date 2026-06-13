@@ -26,6 +26,7 @@ class DropboxSyncManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val kvProxy: KvProxy,
     private val importEngine: ImportEngine,
+    private val xoppFile: XoppFile,
 ) {
     private val log = ShipBook.getLogger("DropboxSyncManager")
 
@@ -203,10 +204,14 @@ class DropboxSyncManager @Inject constructor(
 
                         when (importResult) {
                             is AppResult.Success -> {
-                                // Update manifest with rev
-                                val manifest = DropboxManifest.readManifest(manifestPath)
-                                val updated = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
-                                DropboxManifest.writeManifest(manifestPath, updated)
+                                // Update manifest with rev and actual notebook ID
+                                var manifest = DropboxManifest.readManifest(manifestPath)
+                                manifest = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
+                                val actualBookId = importEngine.lastImportedBookId
+                                if (actualBookId != null) {
+                                    manifest = DropboxManifest.updateNotebookId(manifest, entry.dropboxPath, actualBookId)
+                                }
+                                DropboxManifest.writeManifest(manifestPath, manifest)
 
                                 restoreConnectedState()
                                 AppResult.Success(entry.title)
@@ -228,24 +233,25 @@ class DropboxSyncManager @Inject constructor(
         }
 
     /**
-     * Upload a notebook to Dropbox.
-     * @param notebookId the Notable notebook ID
+     * Upload a notebook to Dropbox by notebook ID (used from toolbar).
      */
-    suspend fun uploadNotebook(
-        notebookId: String,
-        xoppFile: XoppFile,
-        exportTarget: com.ethran.notable.io.ExportTarget.Book
-    ): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
-        val settings = getSettings()
-        if (!settings.enabled || settings.accessToken.isBlank()) {
-            return@withContext AppResult.Error(DomainError.SyncAuthError)
-        }
-
+    suspend fun uploadNotebook(notebookId: String): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
         val manifest = DropboxManifest.readManifest(manifestPath)
         val entry = DropboxManifest.findByNotebookId(manifest, notebookId)
             ?: return@withContext AppResult.Error(
                 DomainError.SyncError("Notebook $notebookId not found in Dropbox manifest")
             )
+        uploadNotebook(entry)
+    }
+
+    /**
+     * Upload a notebook to Dropbox by manifest entry (used from settings UI).
+     */
+    suspend fun uploadNotebook(entry: DropboxManifest.ManifestEntry): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
+        val settings = getSettings()
+        if (!settings.enabled || settings.accessToken.isBlank()) {
+            return@withContext AppResult.Error(DomainError.SyncAuthError)
+        }
 
         _state.value = DropboxSyncState.Syncing("Uploading ${entry.title}...")
 
@@ -265,7 +271,6 @@ class DropboxSyncManager @Inject constructor(
                     }
                 }
                 is AppResult.Error -> {
-                    // File might not exist yet, that's ok
                     if (metaResult.error !is DomainError.NotFound) {
                         _state.value = DropboxSyncState.Error(metaResult.error.userMessage)
                         return@withContext AppResult.Error(metaResult.error)
@@ -276,6 +281,7 @@ class DropboxSyncManager @Inject constructor(
 
         // Export to bytes, using format-aware writer
         try {
+            val exportTarget = com.ethran.notable.io.ExportTarget.Book(entry.notebookId)
             val baos = java.io.ByteArrayOutputStream()
             val includePressure = entry.format != "xoj"
             xoppFile.writeToStream(exportTarget, baos, includePressure)
@@ -284,7 +290,9 @@ class DropboxSyncManager @Inject constructor(
             when (val uploadResult = client.upload(entry.dropboxPath, bytes)) {
                 is AppResult.Success -> {
                     val newRev = uploadResult.data
-                    val updated = DropboxManifest.updateRev(manifest, entry.dropboxPath, newRev)
+                    val updated = DropboxManifest.updateRev(
+                        DropboxManifest.readManifest(manifestPath), entry.dropboxPath, newRev
+                    )
                     DropboxManifest.writeManifest(manifestPath, updated)
 
                     restoreConnectedState()

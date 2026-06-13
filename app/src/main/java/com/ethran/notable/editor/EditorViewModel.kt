@@ -687,11 +687,7 @@ class EditorViewModel @Inject constructor(
         val notebookId = bookId ?: return
         viewModelScope.launch(Dispatchers.IO) {
             snackDispatcher.showOrUpdateSnack(SnackConf(text = "Saving to Dropbox...", duration = 2000))
-            val result = dropboxSyncManager.uploadNotebook(
-                notebookId = notebookId,
-                xoppFile = exportEngine.xoppFile,
-                exportTarget = ExportTarget.Book(notebookId)
-            )
+            val result = dropboxSyncManager.uploadNotebook(notebookId)
             when (result) {
                 is com.ethran.notable.utils.AppResult.Success -> {
                     snackDispatcher.showOrUpdateSnack(SnackConf(text = "Saved to Dropbox", duration = 3000))

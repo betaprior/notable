@@ -107,6 +107,17 @@ object DropboxManifest {
     }
 
     /**
+     * Update the notebookId for a specific entry (link manifest to actual Notable notebook).
+     */
+    fun updateNotebookId(manifest: Manifest, dropboxPath: String, notebookId: String): Manifest {
+        return manifest.copy(
+            files = manifest.files.map {
+                if (it.dropboxPath == dropboxPath) it.copy(notebookId = notebookId) else it
+            }
+        )
+    }
+
+    /**
      * Find manifest entry by notebookId.
      */
     fun findByNotebookId(manifest: Manifest, notebookId: String): ManifestEntry? {

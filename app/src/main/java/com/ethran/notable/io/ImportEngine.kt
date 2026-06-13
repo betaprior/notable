@@ -127,6 +127,7 @@ class ImportEngine @Inject constructor(
             defaultBackgroundType = BackgroundType.Native.key
         )
         bookRepo.createEmpty(book)
+        lastImportedBookId = book.id
 
         val importedPageIds = mutableListOf<String>()
         var persistentError: DomainError? = null
@@ -146,9 +147,13 @@ class ImportEngine @Inject constructor(
                 persistentError = persistentError?.let { it + error } ?: error
             }
         }
-        
+
         return persistentError?.let { AppResult.Error(it) } ?: AppResult.Success(importedPageIds)
     }
+
+    /** The notebook ID created by the most recent import, for callers that need to link it. */
+    var lastImportedBookId: String? = null
+        private set
 
     private suspend fun handleImportPDF(uri: Uri, options: ImportOptions): AppResult<List<String>, DomainError> {
         log.d("Importing Pdf file...")

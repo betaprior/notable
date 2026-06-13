@@ -247,6 +247,41 @@ fun DropboxSettingsTab() {
             }
         }
 
+        // Sync actions (only when connected and have imported files)
+        if (syncState is DropboxSyncState.Connected && manifestEntries.any { it.lastSyncedRev.isNotBlank() }) {
+            Spacer(modifier = Modifier.height(16.dp))
+
+            EInkSection(
+                title = "Sync Actions",
+                icon = Icons.Default.Cloud
+            ) {
+                EInkActionButton(
+                    text = "Upload All to Dropbox",
+                    onClick = {
+                        scope.launch {
+                            val imported = manifestEntries.filter { it.lastSyncedRev.isNotBlank() }
+                            var successCount = 0
+                            var failCount = 0
+                            for (entry in imported) {
+                                val result = syncManager.uploadNotebook(entry)
+                                when (result) {
+                                    is AppResult.Success -> successCount++
+                                    is AppResult.Error -> failCount++
+                                }
+                            }
+                            withContext(Dispatchers.IO) {
+                                manifestEntries = syncManager.getManifestEntries()
+                            }
+                            statusMessage = "Uploaded $successCount, failed $failCount"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isBold = true,
+                    enabled = syncState !is DropboxSyncState.Syncing
+                )
+            }
+        }
+
         // Status message
         statusMessage?.let { msg ->
             Spacer(modifier = Modifier.height(12.dp))
