@@ -206,9 +206,14 @@ class XoppFile @Inject constructor(
             writer.write(right.toString())
             writer.write("\" bottom=\"")
             writer.write(bottom.toString())
-            writer.write("\" filename=\"")
-            writer.write(escapeXml(uri))
-            writer.write("\">")
+            // xoj uses embedded="TRUE", xopp uses filename attribute
+            if (includePressure) {
+                writer.write("\" filename=\"")
+                writer.write(escapeXml(uri))
+                writer.write("\">")
+            } else {
+                writer.write("\" embedded=\"TRUE\">")
+            }
 
             val imageWasWritten = writeImageBase64ToWriter(uri, writer)
             writer.write("</image>\n")
