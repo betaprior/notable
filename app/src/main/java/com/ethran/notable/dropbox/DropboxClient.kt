@@ -341,6 +341,11 @@ class DropboxClient(
         /**
          * Build the Dropbox OAuth2 authorization URL.
          */
+        /**
+         * Build the Dropbox OAuth2 authorization URL.
+         * No redirect_uri — Dropbox will display the auth code on screen
+         * for the user to paste back into the app.
+         */
         fun buildAuthUrl(codeChallenge: String): String {
             return "https://www.dropbox.com/oauth2/authorize" +
                 "?client_id=$DROPBOX_APP_KEY" +

@@ -229,27 +229,6 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             CanvasEventBus.onFocusChange.emit(true)
         }
-
-        // Handle Dropbox OAuth callback
-        intent?.data?.let { uri ->
-            if (uri.scheme == "notable" && uri.host == "dropbox-auth") {
-                val code = uri.getQueryParameter("code")
-                if (code != null) {
-                    lifecycleScope.launch {
-                        val result = dropboxSyncManager.get().handleAuthCallback(code)
-                        val msg = when (result) {
-                            is com.ethran.notable.utils.AppResult.Success -> "Connected to Dropbox"
-                            is com.ethran.notable.utils.AppResult.Error -> "Dropbox auth failed: ${result.error.userMessage}"
-                        }
-                        snackDispatcher.showOrUpdateSnack(
-                            com.ethran.notable.ui.SnackConf(text = msg, duration = 4000)
-                        )
-                    }
-                }
-                // Clear the intent data so it doesn't re-trigger
-                intent = intent?.apply { data = null }
-            }
-        }
     }
 
 

@@ -55,6 +55,7 @@ fun DropboxSettingsTab() {
 
     var manifestEntries by remember { mutableStateOf<List<DropboxManifest.ManifestEntry>>(emptyList()) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
+    var authCode by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         syncManager.initializeState()
@@ -87,28 +88,59 @@ fun DropboxSettingsTab() {
             },
             icon = Icons.Default.Cloud
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (syncState is DropboxSyncState.Connected) {
-                    EInkActionButton(
-                        text = "Disconnect",
-                        onClick = {
-                            scope.launch {
-                                syncManager.disconnect()
-                                statusMessage = "Disconnected from Dropbox"
+            if (syncState is DropboxSyncState.Connected) {
+                EInkActionButton(
+                    text = "Disconnect",
+                    onClick = {
+                        scope.launch {
+                            syncManager.disconnect()
+                            statusMessage = "Disconnected from Dropbox"
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isSecondary = true
+                )
+            } else {
+                // Step 1: Open browser for auth
+                EInkActionButton(
+                    text = "1. Open Dropbox Auth in Browser",
+                    onClick = { syncManager.startAuth(context) },
+                    modifier = Modifier.fillMaxWidth(),
+                    isBold = true,
+                    enabled = syncState !is DropboxSyncState.Authenticating
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Step 2: Paste the code
+                EInkTextField(
+                    label = "2. Paste authorization code here",
+                    value = authCode,
+                    onValueChange = { authCode = it },
+                    placeholder = "Paste code from Dropbox..."
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Step 3: Submit
+                EInkActionButton(
+                    text = "3. Connect",
+                    onClick = {
+                        scope.launch {
+                            val result = syncManager.handleAuthCallback(authCode.trim())
+                            statusMessage = when (result) {
+                                is AppResult.Success -> {
+                                    authCode = ""
+                                    "Connected to Dropbox!"
+                                }
+                                is AppResult.Error -> "Auth failed: ${result.error.userMessage}"
                             }
-                        },
-                        modifier = Modifier.weight(1f),
-                        isSecondary = true
-                    )
-                } else {
-                    EInkActionButton(
-                        text = "Connect to Dropbox",
-                        onClick = { syncManager.startAuth(context) },
-                        modifier = Modifier.weight(1f),
-                        isBold = true,
-                        enabled = syncState !is DropboxSyncState.Authenticating
-                    )
-                }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    isBold = true,
+                    enabled = authCode.isNotBlank() && syncState !is DropboxSyncState.Authenticating
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
