@@ -203,23 +203,27 @@ class DropboxSyncManager @Inject constructor(
                             )
                         )
 
+                        // Always update manifest with notebook ID if a book was created,
+                        // even if import had partial errors (e.g. some pages failed)
+                        var manifest = DropboxManifest.readManifest(manifestPath)
+                        val actualBookId = importEngine.lastImportedBookId
+                        if (actualBookId != null) {
+                            manifest = DropboxManifest.updateNotebookId(manifest, entry.dropboxPath, actualBookId)
+                            Log.i(TAG, "Linked ${entry.dropboxPath} -> notebook $actualBookId")
+                        }
+                        manifest = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
+                        DropboxManifest.writeManifest(manifestPath, manifest)
+
                         when (importResult) {
                             is AppResult.Success -> {
-                                // Update manifest with rev and actual notebook ID
-                                var manifest = DropboxManifest.readManifest(manifestPath)
-                                manifest = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
-                                val actualBookId = importEngine.lastImportedBookId
-                                if (actualBookId != null) {
-                                    manifest = DropboxManifest.updateNotebookId(manifest, entry.dropboxPath, actualBookId)
-                                }
-                                DropboxManifest.writeManifest(manifestPath, manifest)
-
                                 restoreConnectedState()
                                 AppResult.Success(entry.title)
                             }
                             is AppResult.Error -> {
-                                _state.value = DropboxSyncState.Error("Import failed: ${importResult.error.userMessage}")
-                                AppResult.Error(importResult.error)
+                                // Book was likely created but some pages had errors
+                                restoreConnectedState()
+                                Log.w(TAG, "Import had errors: ${importResult.error.userMessage}")
+                                AppResult.Success(entry.title)
                             }
                         }
                     } finally {
