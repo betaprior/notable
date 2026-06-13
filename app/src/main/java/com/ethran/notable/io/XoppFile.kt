@@ -144,7 +144,14 @@ class XoppFile @Inject constructor(
         writer.write("\" height=\"")
         writer.write(height.toString())
         writer.write("\">\n")
-        writer.write("<background type=\"solid\" color=\"#ffffffff\" style=\"plain\"/>\n")
+        // Preserve background style from page if it's a xournal-compatible style
+        val bgStyle = when (pageWithData.page.background) {
+            "lined" -> "lined"
+            "ruled" -> "ruled"
+            "graph" -> "graph"
+            else -> "plain"
+        }
+        writer.write("<background type=\"solid\" color=\"#ffffffff\" style=\"$bgStyle\"/>\n")
         writer.write("<layer>\n")
 
         for (stroke in strokes) {
@@ -152,7 +159,7 @@ class XoppFile @Inject constructor(
             if (stroke.points.size < 3) continue
 
             writer.write("<stroke tool=\"")
-            writer.write(escapeXml(stroke.pen.toString()))
+            writer.write(escapeXml(penToXournalTool(stroke.pen, includePressure)))
             writer.write("\" color=\"")
             writer.write(escapeXml(getColorName(Color(stroke.color))))
             writer.write("\" width=\"")
@@ -321,12 +328,27 @@ class XoppFile @Inject constructor(
 
         for (i in 0 until pages.length) {
             val pageElement = pages.item(i) as Element
-            val page = Page()
+            val bgStyle = parseBackgroundStyle(pageElement)
+            val page = if (bgStyle != null && bgStyle != "plain") {
+                Page(background = bgStyle)
+            } else {
+                Page()
+            }
             val strokes = parseStrokes(pageElement, page)
             val images = parseImages(pageElement, page)
             savePageToDatabase(PageWithData(page, strokes, images))
         }
         log.i("Successfully imported book with ${pages.length} pages.")
+    }
+
+    /**
+     * Parse the background style from a page element (e.g. "plain", "lined", "ruled", "graph").
+     */
+    private fun parseBackgroundStyle(pageElement: Element): String? {
+        val bgNodes = pageElement.getElementsByTagName("background")
+        if (bgNodes.length == 0) return null
+        val bgElement = bgNodes.item(0) as? Element ?: return null
+        return bgElement.getAttribute("style").takeIf { it.isNotBlank() }
     }
 
     /**
@@ -565,6 +587,29 @@ class XoppFile @Inject constructor(
                     (argb) and 0xFF,        // Blue
                     (argb shr 24) and 0xFF  // Alpha
                 )
+            }
+        }
+    }
+
+    /**
+     * Map Notable pen types to xournal/xournalpp tool names.
+     * Classic xournal only understands: pen, eraser, highlighter
+     * Xournalpp also accepts the Notable pen names but maps them to pen/highlighter.
+     */
+    private fun penToXournalTool(pen: Pen, xoppFormat: Boolean): String {
+        return if (xoppFormat) {
+            // xournalpp is more tolerant but still best to use standard names
+            when (pen) {
+                Pen.MARKER -> "highlighter"
+                Pen.BALLPEN, Pen.REDBALLPEN, Pen.GREENBALLPEN, Pen.BLUEBALLPEN -> "pen"
+                Pen.FOUNTAIN, Pen.BRUSH, Pen.PENCIL -> "pen"
+                Pen.DASHED -> "pen"
+            }
+        } else {
+            // Classic xournal: only pen, eraser, highlighter are valid
+            when (pen) {
+                Pen.MARKER -> "highlighter"
+                else -> "pen"
             }
         }
     }
