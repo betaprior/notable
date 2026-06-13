@@ -147,6 +147,7 @@ fun SettingsContent(
         stringResource(R.string.settings_tab_general_name),
         stringResource(R.string.settings_tab_gestures_name),
         stringResource(R.string.settings_tab_sync_name),
+        "Dropbox",
         stringResource(R.string.settings_tab_debug_name)
     )
 
@@ -181,7 +182,9 @@ fun SettingsContent(
                         callbacks = syncCallbacks,
                     )
 
-                    3 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
+                    3 -> DropboxSettingsTab()
+
+                    4 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
                 }
             }
 

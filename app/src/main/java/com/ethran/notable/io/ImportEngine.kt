@@ -104,7 +104,7 @@ class ImportEngine @Inject constructor(
         )
 
         return when {
-            XoppFile.isXoppFile(mimeType, bookTitle) -> handleImportXopp(uri, optionsWithTitle)
+            XoppFile.isXournalFile(mimeType, bookTitle) -> handleImportXopp(uri, optionsWithTitle)
             isPdfFile(mimeType, bookTitle) -> handleImportPDF(uri, optionsWithTitle)
             else -> {
                 val errorMessage = "Unsupported file type: $mimeType"
@@ -206,7 +206,9 @@ class ImportEngine @Inject constructor(
      * Extracts the book title from a file URI.
      */
     private fun getFileName(uri: Uri): String {
-        return uri.lastPathSegment?.substringAfterLast("/")?.removeSuffix(".xopp")
+        return uri.lastPathSegment?.substringAfterLast("/")
+            ?.removeSuffix(".xopp")
+            ?.removeSuffix(".xoj")
             ?: "Imported Book"
     }
 

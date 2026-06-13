@@ -65,8 +65,26 @@ class XoppFile @Inject constructor(
     private val scaleFactor = A4_WIDTH.toFloat() / SCREEN_WIDTH
     private val maxPressure = EpdController.getMaxTouchPressure()
 
+    /**
+     * Write notebook/page as xopp format (with pressure data).
+     */
     suspend fun writeToXoppStream(target: ExportTarget, output: OutputStream) {
-        // Build a temporary plain-XML file using existing writePage(), then gzip it into 'output'
+        writeToStream(target, output, includePressure = true)
+    }
+
+    /**
+     * Write notebook/page as xoj format (no pressure data).
+     */
+    suspend fun writeToXojStream(target: ExportTarget, output: OutputStream) {
+        writeToStream(target, output, includePressure = false)
+    }
+
+    /**
+     * Write notebook/page in xournal XML format.
+     * @param includePressure if true, writes per-point pressure as variable widths (xopp);
+     *                        if false, writes single width per stroke (xoj)
+     */
+    suspend fun writeToStream(target: ExportTarget, output: OutputStream, includePressure: Boolean = true) {
         val tmp = File(
             context.cacheDir, when (target) {
                 is ExportTarget.Book -> "notable_xopp_book.xml"
@@ -83,12 +101,12 @@ class XoppFile @Inject constructor(
                         val book = bookRepo.getById(target.bookId)
                             ?: throw IOException("Book not found: ${target.bookId}")
                         book.pageIds.forEach { pageId ->
-                            writePage(pageId, writer)
+                            writePage(pageId, writer, includePressure)
                         }
                     }
 
                     is ExportTarget.Page -> {
-                        writePage(target.pageId, writer)
+                        writePage(target.pageId, writer, includePressure)
                     }
                 }
                 writer.write("</xournal>\n")
@@ -114,7 +132,7 @@ class XoppFile @Inject constructor(
      * @param pageId The ID of the page to process.
      * @param writer The BufferedWriter to write XML data to.
      */
-    private suspend fun writePage(pageId: String, writer: BufferedWriter) {
+    private suspend fun writePage(pageId: String, writer: BufferedWriter, includePressure: Boolean = true) {
         val pageWithData = pageRepo.getWithDataById(pageId) ?: return
         val strokes = pageWithData.strokes
         val images = pageWithData.images
@@ -140,7 +158,7 @@ class XoppFile @Inject constructor(
             writer.write("\" width=\"")
             writer.write((stroke.size * scaleFactor).toString())
 
-            if (stroke.pen == Pen.FOUNTAIN || stroke.pen == Pen.BRUSH || stroke.pen == Pen.PENCIL) {
+            if (includePressure && (stroke.pen == Pen.FOUNTAIN || stroke.pen == Pen.BRUSH || stroke.pen == Pen.PENCIL)) {
                 stroke.points.forEach { point ->
                     writer.write(" ")
                     writer.write(
@@ -565,6 +583,18 @@ class XoppFile @Inject constructor(
 
             Log.d("XoppFile", "isXoppFile($isXoppFile): $mimeType, $fileName")
             return isXoppFile
+        }
+
+        fun isXojFile(mimeType: String?, fileName: String?): Boolean {
+            return mimeType in listOf(
+                "application/x-xoj",
+                "application/gzip",
+                "application/octet-stream"
+            ) || fileName?.endsWith(".xoj", ignoreCase = true) == true
+        }
+
+        fun isXournalFile(mimeType: String?, fileName: String?): Boolean {
+            return isXoppFile(mimeType, fileName) || isXojFile(mimeType, fileName)
         }
     }
 }

@@ -247,10 +247,11 @@ class DropboxSyncManager @Inject constructor(
             }
         }
 
-        // Export to bytes
+        // Export to bytes, using format-aware writer
         try {
             val baos = java.io.ByteArrayOutputStream()
-            xoppFile.writeToXoppStream(exportTarget, baos)
+            val includePressure = entry.format != "xoj"
+            xoppFile.writeToStream(exportTarget, baos, includePressure)
             val bytes = baos.toByteArray()
 
             when (val uploadResult = client.upload(entry.dropboxPath, bytes)) {
