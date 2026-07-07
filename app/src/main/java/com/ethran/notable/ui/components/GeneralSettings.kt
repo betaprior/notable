@@ -6,6 +6,7 @@ import androidx.compose.ui.res.stringResource
 import com.ethran.notable.R
 import com.ethran.notable.data.datastore.AppSettings
 import com.ethran.notable.data.datastore.PageSize
+import com.ethran.notable.data.datastore.SideButtonAction
 
 
 @Composable
@@ -31,6 +32,15 @@ fun GeneralSettings(
             ),
             value = settings.pageSize,
             onValueChange = { onSettingsChange(settings.copy(pageSize = it)) }
+        )
+        SelectorRow(
+            label = "Pen button / eraser action",
+            options = listOf(
+                SideButtonAction.Erase to "Erase",
+                SideButtonAction.Select to "Lasso select",
+            ),
+            value = settings.sideButtonAction,
+            onValueChange = { onSettingsChange(settings.copy(sideButtonAction = it)) }
         )
         SelectorRow(
             label = stringResource(R.string.toolbar_position), options = listOf(

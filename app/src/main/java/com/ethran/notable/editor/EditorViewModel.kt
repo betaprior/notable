@@ -11,7 +11,6 @@ import com.ethran.notable.data.PageDataManager
 import com.ethran.notable.data.copyImageToDatabase
 import com.ethran.notable.data.datastore.EditorSettingCacheManager
 import com.ethran.notable.data.datastore.GlobalAppSettings
-import com.ethran.notable.data.datastore.SideButtonAction
 import com.ethran.notable.data.db.getPageIndex
 import com.ethran.notable.data.db.getParentFolder
 import com.ethran.notable.data.model.BackgroundType
@@ -137,7 +136,6 @@ sealed class ToolbarAction {
 
     object SaveToDropbox : ToolbarAction()
     object ToggleInkStream : ToolbarAction()
-    object ToggleSideButtonAction : ToolbarAction()
 
     /** Set an absolute zoom level, anchored on the current view center. */
     data class SetZoom(val level: Float) : ToolbarAction()
@@ -338,7 +336,6 @@ class EditorViewModel @Inject constructor(
 
             ToolbarAction.SaveToDropbox -> sendUiEvent(EditorUiEvent.SaveToDropbox)
             ToolbarAction.ToggleInkStream -> handleToggleInkStream()
-            ToolbarAction.ToggleSideButtonAction -> toggleSideButtonAction()
         }
     }
 
@@ -391,25 +388,6 @@ class EditorViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             appRepository.kvProxy.setAppSettings(
                 GlobalAppSettings.current.copy(scribbleToEraseEnabled = enabled)
-            )
-        }
-    }
-
-    private fun toggleSideButtonAction() {
-        val next = if (GlobalAppSettings.current.sideButtonAction == SideButtonAction.Select)
-            SideButtonAction.Erase else SideButtonAction.Select
-        viewModelScope.launch(Dispatchers.IO) {
-            appRepository.kvProxy.setAppSettings(
-                GlobalAppSettings.current.copy(sideButtonAction = next)
-            )
-        }
-        viewModelScope.launch {
-            snackDispatcher.showOrUpdateSnack(
-                SnackConf(
-                    text = if (next == SideButtonAction.Select)
-                        "Pen button: lasso select" else "Pen button: erase",
-                    duration = 2000
-                )
             )
         }
     }
