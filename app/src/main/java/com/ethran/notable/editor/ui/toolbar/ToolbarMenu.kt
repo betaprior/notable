@@ -126,6 +126,12 @@ private fun ToolbarMenuContent(
             DividerCentered()
         }
 
+        MenuItem(if (uiState.streamingEnabled) "Live streaming: On" else "Live streaming: Off") {
+            onAction(ToolbarAction.ToggleInkStream)
+            onAction(ToolbarAction.ToggleMenu)
+        }
+        DividerCentered()
+
         MenuItem(stringResource(R.string.clean_all_strokes)) {
             onAction(ToolbarAction.ClearAllStrokes)
             onAction(ToolbarAction.ToggleMenu)

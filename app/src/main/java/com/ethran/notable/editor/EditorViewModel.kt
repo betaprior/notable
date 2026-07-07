@@ -88,6 +88,7 @@ data class ToolbarUiState(
     val isSelectionActive: Boolean = false,
     val hasClipboard: Boolean = false,
     val hasDropboxLink: Boolean = false,
+    val streamingEnabled: Boolean = false,
     val isDrawing: Boolean = true,
     val isQuickNavOpen: Boolean = false,
 ) {
@@ -133,6 +134,7 @@ sealed class ToolbarAction {
     data class UpdateQuickNavOpen(val isOpen: Boolean) : ToolbarAction()
 
     object SaveToDropbox : ToolbarAction()
+    object ToggleInkStream : ToolbarAction()
 }
 
 
@@ -189,6 +191,12 @@ class EditorViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             ClipboardStore.content.collect { setHasClipboard(it != null) }
+        }
+        // Keep the toolbar toggle in sync with the streaming setting.
+        viewModelScope.launch {
+            inkStreamClient.settings.collect { s ->
+                _toolbarState.update { it.copy(streamingEnabled = s.enabled) }
+            }
         }
     }
 
@@ -316,6 +324,7 @@ class EditorViewModel @Inject constructor(
             }
 
             ToolbarAction.SaveToDropbox -> sendUiEvent(EditorUiEvent.SaveToDropbox)
+            ToolbarAction.ToggleInkStream -> handleToggleInkStream()
         }
     }
 
@@ -705,6 +714,32 @@ class EditorViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun handleToggleInkStream() {
+        val current = inkStreamClient.settings.value
+        val next = !current.enabled
+        if (next && current.host.isBlank()) {
+            viewModelScope.launch {
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(
+                        text = "Set a receiver host in Settings > Ink Stream first",
+                        duration = 4000
+                    )
+                )
+            }
+            return
+        }
+        inkStreamClient.saveSettings(current.copy(enabled = next))
+        viewModelScope.launch {
+            snackDispatcher.showOrUpdateSnack(
+                SnackConf(
+                    text = if (next) "Live streaming on -> ${current.host}:${current.port}"
+                    else "Live streaming off",
+                    duration = 2500
+                )
+            )
         }
     }
 
