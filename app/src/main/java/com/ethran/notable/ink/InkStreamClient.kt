@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import kotlin.math.floor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -129,13 +130,21 @@ class InkStreamClient @Inject constructor(
     fun streamCompleteStrokes(strokes: List<Stroke>) {
         if (!isEnabled || strokes.isEmpty()) return
         val sf = scaleFactor
+        val pageHeight = pageHeightPt.toFloat()
         for (stroke in strokes) {
             val uuid = uuidBytes(stroke.id) ?: continue
             val pts = stroke.points
+            if (pts.isEmpty()) continue
+
+            // Continuous-page mapping: bind the stroke to the virtual page of its
+            // first point and make y page-local (matches the live-draw path).
+            val vpage = if (pageHeight > 0)
+                floor(pts.first().y * sf / pageHeight).toInt().coerceAtLeast(0) else 0
+            val yOffset = vpage * pageHeight
 
             val begin = header(MSG_STROKE_BEGIN, 16 + 2 + 1 + 1 + 4 + 4)
             begin.put(uuid)
-            begin.putShort(lastPageIndex.coerceIn(0, 65535).toShort())
+            begin.putShort(vpage.coerceIn(0, 65535).toShort())
             begin.put(penToTool(stroke.pen))
             begin.put(0)
             begin.putInt(colorToRgba(stroke.pen, stroke.color))
@@ -153,7 +162,7 @@ class InkStreamClient @Inject constructor(
                 for (j in i until i + n) {
                     val p = pts[j]
                     buf.putFloat(p.x * sf)
-                    buf.putFloat(p.y * sf)
+                    buf.putFloat(p.y * sf - yOffset)
                     buf.putFloat(((p.pressure ?: maxP) / maxP).coerceIn(0f, 1f))
                 }
                 enqueue(buf)

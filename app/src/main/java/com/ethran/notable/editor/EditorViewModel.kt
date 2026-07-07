@@ -548,10 +548,6 @@ class EditorViewModel @Inject constructor(
                 hasDropboxLink = hasDropbox
             )
         }
-
-        // Mirror the active page to a live receiver (creates the xournal page and
-        // scrolls to it). Runs on page load and navigation.
-        inkStreamClient.setActivePage(pageIndex)
     }
 
     private fun saveToolbarState() {
@@ -643,15 +639,13 @@ class EditorViewModel @Inject constructor(
             // The View's LaunchedEffect will handle the full load once navigation syncs.
             Log.d("EditorView", "Page changed")
             val oldPage = currentPageId
-            // Update the streamed page index now, not via the loadToolbarState
-            // round-trip (which the comment above notes isn't used for regular
-            // page switching) -- otherwise strokes on the new page stream with a
-            // stale index and land on the wrong xournal page.
+            // Keep the "Page X of Y" indicator in sync on navigation. (The live
+            // mirror derives its xournal page from stroke y-coordinates, not this
+            // discrete index, since Notable pages are continuous.)
             val newIndex = bookId?.let {
                 appRepository.bookRepository.getById(it)?.getPageIndex(newPageId)
             }?.takeIf { it >= 0 } ?: 0
             _toolbarState.update { it.copy(pageId = newPageId, currentPageNumber = newIndex) }
-            inkStreamClient.setActivePage(newIndex)
             syncFromPageId(oldPage)
         } else {
             Log.d("EditorView", "Tried to change to same page!")
@@ -759,7 +753,6 @@ class EditorViewModel @Inject constructor(
             return
         }
         inkStreamClient.saveSettings(current.copy(enabled = next))
-        if (next) inkStreamClient.setActivePage(_toolbarState.value.currentPageNumber)
         viewModelScope.launch {
             snackDispatcher.showOrUpdateSnack(
                 SnackConf(

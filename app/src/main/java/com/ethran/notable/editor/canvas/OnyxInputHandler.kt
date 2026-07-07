@@ -28,6 +28,7 @@ import com.ethran.notable.editor.utils.setupSurface
 import com.ethran.notable.editor.utils.transformToLine
 import com.ethran.notable.ui.convertDpToPixel
 import com.ethran.notable.SCREEN_WIDTH
+import com.ethran.notable.data.datastore.pageHeightPt
 import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.ink.InkStreamClient
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -43,6 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.thread
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -64,6 +66,11 @@ class OnyxInputHandler(
     // Id assigned to the in-progress streamed stroke at pen-down; reused as the
     // Notable Stroke.id so streamed strokes and later deletes share identity.
     private var pendingStrokeId: String? = null
+    // Notable is a continuous (growable) page; the mirror maps each pageHeightPt-tall
+    // band to a xournal page. Offset (pt) subtracted from a stroke's y to get its
+    // page-local y; the last virtual page we told the receiver to follow.
+    private var strokePageOffsetPt: Float = 0f
+    private var lastStreamedPage: Int = -1
     // screen px -> xoj page points, matching XoppFile export (pageWidthPt / SCREEN_WIDTH)
     private val xojScale: Float get() = pageWidthPt.toFloat() / SCREEN_WIDTH
 
@@ -96,9 +103,20 @@ class OnyxInputHandler(
             // Stroke created later in handleDraw share identity -> deletes line up.
             val strokeId = java.util.UUID.randomUUID().toString()
             pendingStrokeId = strokeId
+            // Which xournal page this stroke lands on, from its y-coordinate. The
+            // whole stroke is bound to the page of its first point (no splitting
+            // across the boundary -- a known deferred corner case).
+            val absY = absYPt(p1)
+            val vpage = if (pageHeightPt > 0)
+                floor(absY / pageHeightPt).toInt().coerceAtLeast(0) else 0
+            strokePageOffsetPt = vpage * pageHeightPt.toFloat()
+            if (vpage != lastStreamedPage) {
+                inkStream.setActivePage(vpage) // create + scroll xournal to follow
+                lastStreamedPage = vpage
+            }
             inkStream.strokeBegin(
                 strokeId = strokeId,
-                pageIndex = toolbarState.currentPageNumber,
+                pageIndex = vpage,
                 pen = pen,
                 color = settings.color,
                 width = settings.strokeSize * xojScale
@@ -359,12 +377,17 @@ class OnyxInputHandler(
         }
     }
 
-    // Convert a raw (screen-space) TouchPoint to xoj page points and stream it.
+    // Absolute page y of a raw (screen-space) point, in xoj points.
+    private fun absYPt(p: TouchPoint?): Float =
+        ((p?.y ?: 0f) / page.zoomLevel.value + page.scroll.y) * xojScale
+
+    // Convert a raw (screen-space) TouchPoint to xoj page points (y made local to
+    // the stroke's virtual page) and stream it.
     private fun streamPoint(p: TouchPoint) {
         val zoom = page.zoomLevel.value
         val scroll = page.scroll
         val xojX = (p.x / zoom + scroll.x) * xojScale
-        val xojY = (p.y / zoom + scroll.y) * xojScale
+        val xojY = (p.y / zoom + scroll.y) * xojScale - strokePageOffsetPt
         val maxP = EpdController.getMaxTouchPressure().takeIf { it > 0f } ?: 4096f
         inkStream.strokePoint(xojX, xojY, (p.pressure / maxP).coerceIn(0f, 1f))
     }
