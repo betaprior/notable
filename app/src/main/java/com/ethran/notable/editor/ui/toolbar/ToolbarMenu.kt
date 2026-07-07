@@ -25,6 +25,8 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ethran.notable.R
 import com.ethran.notable.data.datastore.BUTTON_SIZE
+import com.ethran.notable.data.datastore.GlobalAppSettings
+import com.ethran.notable.data.datastore.SideButtonAction
 import com.ethran.notable.editor.ToolbarAction
 import com.ethran.notable.editor.ToolbarUiState
 import com.ethran.notable.editor.state.Mode
@@ -128,6 +130,15 @@ private fun ToolbarMenuContent(
 
         MenuItem(if (uiState.streamingEnabled) "Live streaming: On" else "Live streaming: Off") {
             onAction(ToolbarAction.ToggleInkStream)
+            onAction(ToolbarAction.ToggleMenu)
+        }
+        DividerCentered()
+
+        MenuItem(
+            if (GlobalAppSettings.current.sideButtonAction == SideButtonAction.Select)
+                "Pen button: Lasso select" else "Pen button: Erase"
+        ) {
+            onAction(ToolbarAction.ToggleSideButtonAction)
             onAction(ToolbarAction.ToggleMenu)
         }
         DividerCentered()
