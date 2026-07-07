@@ -30,6 +30,10 @@ import com.ethran.notable.editor.utils.restoreDefaults
 import com.ethran.notable.editor.utils.setupSurface
 import com.ethran.notable.editor.utils.transformToLine
 import com.ethran.notable.ui.convertDpToPixel
+import com.ethran.notable.SCREEN_WIDTH
+import com.ethran.notable.data.datastore.A4_WIDTH
+import com.ethran.notable.ink.InkStreamClient
+import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.device.Device
 import com.onyx.android.sdk.extension.isNullOrEmpty
@@ -58,6 +62,11 @@ class OnyxInputHandler(
     private val log = ShipBook.getLogger("DrawCanvas")
     private val toolbarState get() = viewModel.toolbarState.value
 
+    // Live ink streaming (Phase 1: one-way mirror to xournal over UDP).
+    private val inkStream: InkStreamClient by lazy { InkStreamClient.from(drawCanvas.context) }
+    // screen px -> xoj page points, matching XoppFile export (A4_WIDTH / SCREEN_WIDTH)
+    private val xojScale: Float get() = A4_WIDTH.toFloat() / SCREEN_WIDTH
+
     // TODO: As OnyxInput is not done by lazy, which forces evaluation of the touchHelper
     //       lazy during DrawCanvas construction.
     val touchHelper by lazy {
@@ -80,12 +89,27 @@ class OnyxInputHandler(
         // - erase :  `onBeginRawErasing()` -> `onRawErasingTouchPointMoveReceived()` -> `onRawErasingTouchPointListReceived()` -> `onEndRawErasing()`
 
         override fun onBeginRawDrawing(p0: Boolean, p1: TouchPoint?) {
+            if (!inkStream.isEnabled || toolbarState.mode != Mode.Draw) return
+            val pen = toolbarState.pen
+            val settings = toolbarState.penSettings[pen.penName] ?: return
+            inkStream.strokeBegin(
+                pageIndex = toolbarState.currentPageNumber,
+                pen = pen,
+                color = settings.color,
+                width = settings.strokeSize * xojScale
+            )
+            p1?.let { streamPoint(it) }
         }
 
         override fun onEndRawDrawing(p0: Boolean, p1: TouchPoint?) {
+            if (!inkStream.isEnabled) return
+            p1?.let { streamPoint(it) }
+            inkStream.strokeEnd()
         }
 
         override fun onRawDrawingTouchPointMoveReceived(p0: TouchPoint?) {
+            if (!inkStream.isEnabled) return
+            p0?.let { streamPoint(it) }
         }
 
         override fun onRawDrawingTouchPointListReceived(plist: TouchPointList) =
@@ -321,6 +345,16 @@ class OnyxInputHandler(
                 }
             }
         }
+    }
+
+    // Convert a raw (screen-space) TouchPoint to xoj page points and stream it.
+    private fun streamPoint(p: TouchPoint) {
+        val zoom = page.zoomLevel.value
+        val scroll = page.scroll
+        val xojX = (p.x / zoom + scroll.x) * xojScale
+        val xojY = (p.y / zoom + scroll.y) * xojScale
+        val maxP = EpdController.getMaxTouchPressure().takeIf { it > 0f } ?: 4096f
+        inkStream.strokePoint(xojX, xojY, (p.pressure / maxP).coerceIn(0f, 1f))
     }
 
     private fun onRawErasingList(plist: TouchPointList?) {

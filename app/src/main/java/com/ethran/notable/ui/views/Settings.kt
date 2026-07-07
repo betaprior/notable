@@ -148,6 +148,7 @@ fun SettingsContent(
         stringResource(R.string.settings_tab_gestures_name),
         stringResource(R.string.settings_tab_sync_name),
         "Dropbox",
+        "Ink Stream",
         stringResource(R.string.settings_tab_debug_name)
     )
 
@@ -184,7 +185,9 @@ fun SettingsContent(
 
                     3 -> DropboxSettingsTab()
 
-                    4 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
+                    4 -> InkStreamSettingsTab()
+
+                    5 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
                 }
             }
 
