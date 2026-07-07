@@ -43,7 +43,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
-import kotlin.concurrent.thread
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -125,13 +124,16 @@ class OnyxInputHandler(
         }
 
         override fun onEndRawDrawing(p0: Boolean, p1: TouchPoint?) {
-            if (!inkStream.isEnabled) return
+            // Same guard as onBeginRawDrawing: a lasso (Select) or toolbar-erase drag also
+            // flows through the raw-drawing callbacks, and must not push stray end/points
+            // into the stream.
+            if (!inkStream.isEnabled || toolbarState.mode != Mode.Draw) return
             p1?.let { streamPoint(it) }
             inkStream.strokeEnd()
         }
 
         override fun onRawDrawingTouchPointMoveReceived(p0: TouchPoint?) {
-            if (!inkStream.isEnabled) return
+            if (!inkStream.isEnabled || toolbarState.mode != Mode.Draw) return
             p0?.let { streamPoint(it) }
         }
 
@@ -255,7 +257,10 @@ class OnyxInputHandler(
         when (toolbarState.mode) {
             Mode.Erase -> onRawErasingList(plist)
             Mode.Select -> {
-                thread {
+                // Must run on Main: handleSelect writes the Compose selectionState that the
+                // selection popup (SelectedBitmap) recomposes from. Off-main writes can set
+                // the state without triggering recomposition -> lasso draws but no popup.
+                coroutineScope.launch(Dispatchers.Main.immediate) {
                     val points =
                         copyInputToSimplePointF(plist.points, page.scroll, page.zoomLevel.value)
                     handleSelect(

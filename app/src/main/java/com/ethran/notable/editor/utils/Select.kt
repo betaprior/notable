@@ -201,10 +201,18 @@ fun handleSelect(
 ) {
     val state = viewModel.selectionState
 
-    val firstPointPosition =
-        if (points.first().x < 50) SelectPointPosition.LEFT else if (points.first().x > page.viewWidth - 50) SelectPointPosition.RIGHT else SelectPointPosition.CENTER
-    val lastPointPosition =
-        if (points.last().x < 50) SelectPointPosition.LEFT else if (points.last().x > page.viewWidth - 50) SelectPointPosition.RIGHT else SelectPointPosition.CENTER
+    // "Near the left/right screen edge?" -- decides page-cut vs lasso. The points are in
+    // PAGE coordinates, so convert to screen x before comparing to the 50px edge margins,
+    // otherwise a centered lasso is misclassified as a page cut when zoomed or scrolled.
+    fun edgePosition(pageX: Float): SelectPointPosition {
+        val screenX = (pageX - page.scroll.x) * page.zoomLevel.value
+        return if (screenX < 50) SelectPointPosition.LEFT
+        else if (screenX > page.viewWidth - 50) SelectPointPosition.RIGHT
+        else SelectPointPosition.CENTER
+    }
+
+    val firstPointPosition = edgePosition(points.first().x)
+    val lastPointPosition = edgePosition(points.last().x)
 
     if (firstPointPosition != SelectPointPosition.CENTER && lastPointPosition != SelectPointPosition.CENTER && firstPointPosition != lastPointPosition) {
         // Page cut situation
