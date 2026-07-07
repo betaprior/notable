@@ -3,7 +3,10 @@ package com.ethran.notable.editor
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
+import com.ethran.notable.SCREEN_HEIGHT
+import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.data.datastore.GlobalAppSettings
+import kotlin.math.min
 import com.ethran.notable.editor.canvas.CanvasEventBus
 import com.ethran.notable.editor.state.ClipboardStore
 import com.ethran.notable.editor.state.History
@@ -185,6 +188,36 @@ class EditorControlTower(
             page.scroll = Offset(0f, page.scroll.y)
             page.applyZoomAndRedraw(1f)
             // Request UI update
+            CanvasEventBus.refreshUiImmediately.emit(Unit)
+        }
+    }
+
+    /** Set an absolute zoom level, keeping the current view center anchored. */
+    fun setZoom(level: Float) {
+        scope.launch {
+            val old = page.zoomLevel.value
+            if (old == level) return@launch
+            // Page point currently under the view center (screen = (page - scroll) * zoom).
+            val cx = page.viewWidth / 2f
+            val cy = page.viewHeight / 2f
+            val pageX = cx / old + page.scroll.x
+            val pageY = cy / old + page.scroll.y
+            // New scroll that keeps that page point under the center at the new zoom.
+            val newScrollX = (pageX - cx / level).coerceAtLeast(0f)
+            val newScrollY = (pageY - cy / level).coerceAtLeast(0f)
+            page.scroll = Offset(newScrollX, newScrollY)
+            page.applyZoomAndRedraw(level)
+            CanvasEventBus.refreshUiImmediately.emit(Unit)
+        }
+    }
+
+    /** Fit the page width to the visible view; keeps vertical position, resets horizontal. */
+    fun zoomFitWidth() {
+        scope.launch {
+            val pageW = min(SCREEN_WIDTH, SCREEN_HEIGHT).toFloat()
+            val fit = page.viewWidth / pageW
+            page.scroll = Offset(0f, page.scroll.y)
+            page.applyZoomAndRedraw(fit)
             CanvasEventBus.refreshUiImmediately.emit(Unit)
         }
     }

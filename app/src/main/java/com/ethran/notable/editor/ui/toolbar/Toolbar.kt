@@ -313,6 +313,32 @@ fun ToolbarContent(
                         )
                         VerticalDivider()
                     }
+
+                    // Zoom presets
+                    ToolbarButton(
+                        text = "Fit",
+                        contentDescription = "fit page width",
+                        onSelect = { onAction(ToolbarAction.ZoomFitWidth) }
+                    )
+                    ToolbarButton(
+                        isSelected = zoomMatches(uiState.zoomLevel, 1.25f),
+                        text = "125%",
+                        contentDescription = "zoom 125%",
+                        onSelect = { onAction(ToolbarAction.SetZoom(1.25f)) }
+                    )
+                    ToolbarButton(
+                        isSelected = zoomMatches(uiState.zoomLevel, 1.5f),
+                        text = "150%",
+                        contentDescription = "zoom 150%",
+                        onSelect = { onAction(ToolbarAction.SetZoom(1.5f)) }
+                    )
+                    ToolbarButton(
+                        isSelected = zoomMatches(uiState.zoomLevel, 2.0f),
+                        text = "200%",
+                        contentDescription = "zoom 200%",
+                        onSelect = { onAction(ToolbarAction.SetZoom(2.0f)) }
+                    )
+                    VerticalDivider()
                 } // end left scrollable Row
 
 
@@ -398,6 +424,9 @@ fun ToolbarContent(
         )
     }
 }
+
+private fun zoomMatches(current: Float, target: Float): Boolean =
+    kotlin.math.abs(current - target) < 0.01f
 
 @Composable
 private fun VerticalDivider() {

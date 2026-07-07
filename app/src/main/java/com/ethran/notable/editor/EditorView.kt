@@ -161,6 +161,8 @@ fun EditorView(
                     CanvasCommand.Redo -> editorControlTower.redo()
                     CanvasCommand.Paste -> editorControlTower.pasteFromClipboard()
                     CanvasCommand.ResetView -> editorControlTower.resetZoomAndScroll()
+                    is CanvasCommand.SetZoom -> editorControlTower.setZoom(command.level)
+                    CanvasCommand.ZoomFitWidth -> editorControlTower.zoomFitWidth()
                     CanvasCommand.ClearAllStrokes -> {
                         CanvasEventBus.clearPageSignal.emit(Unit)
                         snackManager.displaySnack(
@@ -224,6 +226,7 @@ fun EditorView(
         ) {
             log.v("EditorView: zoomLevel=$zoomLevel, selectionActive=$selectionActive")
             viewModel.setShowResetView(zoomLevel != 1.0f)
+            viewModel.setZoomLevel(zoomLevel)
             viewModel.setSelectionActive(selectionActive)
         }
 

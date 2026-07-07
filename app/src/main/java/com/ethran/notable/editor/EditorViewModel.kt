@@ -78,6 +78,7 @@ data class ToolbarUiState(
     val isStrokeSelectionOpen: Boolean = false,
     val isBackgroundSelectorModalOpen: Boolean = false,
     val showResetView: Boolean = false,
+    val zoomLevel: Float = 1.0f,
 
     // Canvas / drawing
     val mode: Mode = Mode.Draw,
@@ -135,6 +136,12 @@ sealed class ToolbarAction {
 
     object SaveToDropbox : ToolbarAction()
     object ToggleInkStream : ToolbarAction()
+
+    /** Set an absolute zoom level, anchored on the current view center. */
+    data class SetZoom(val level: Float) : ToolbarAction()
+
+    /** Fit the page width to the visible view (fixes right-edge clipping). */
+    object ZoomFitWidth : ToolbarAction()
 }
 
 
@@ -147,6 +154,8 @@ sealed class CanvasCommand {
     object Redo : CanvasCommand()
     object Paste : CanvasCommand()
     object ResetView : CanvasCommand()
+    data class SetZoom(val level: Float) : CanvasCommand()
+    object ZoomFitWidth : CanvasCommand()
     object ClearAllStrokes : CanvasCommand()
     object RefreshCanvas : CanvasCommand()
     data class CopyImageToCanvas(val uri: Uri) : CanvasCommand()
@@ -310,6 +319,8 @@ class EditorViewModel @Inject constructor(
             ToolbarAction.Redo -> sendCanvasCommand(CanvasCommand.Redo)
             ToolbarAction.Paste -> sendCanvasCommand(CanvasCommand.Paste)
             ToolbarAction.ResetView -> sendCanvasCommand(CanvasCommand.ResetView)
+            is ToolbarAction.SetZoom -> sendCanvasCommand(CanvasCommand.SetZoom(action.level))
+            ToolbarAction.ZoomFitWidth -> sendCanvasCommand(CanvasCommand.ZoomFitWidth)
             ToolbarAction.ClearAllStrokes -> sendCanvasCommand(CanvasCommand.ClearAllStrokes)
 
             ToolbarAction.NavigateToLibrary -> handleNavigateToLibrary()
@@ -666,6 +677,10 @@ class EditorViewModel @Inject constructor(
 
     fun setShowResetView(showResetView: Boolean) {
         _toolbarState.update { it.copy(showResetView = showResetView) }
+    }
+
+    fun setZoomLevel(zoom: Float) {
+        _toolbarState.update { it.copy(zoomLevel = zoom) }
     }
 
     fun setSelectionActive(active: Boolean) {
