@@ -548,6 +548,10 @@ class EditorViewModel @Inject constructor(
                 hasDropboxLink = hasDropbox
             )
         }
+
+        // Mirror the active page to a live receiver (creates the xournal page and
+        // scrolls to it). Runs on page load and navigation.
+        inkStreamClient.setActivePage(pageIndex)
     }
 
     private fun saveToolbarState() {
@@ -747,6 +751,7 @@ class EditorViewModel @Inject constructor(
             return
         }
         inkStreamClient.saveSettings(current.copy(enabled = next))
+        if (next) inkStreamClient.setActivePage(_toolbarState.value.currentPageNumber)
         viewModelScope.launch {
             snackDispatcher.showOrUpdateSnack(
                 SnackConf(

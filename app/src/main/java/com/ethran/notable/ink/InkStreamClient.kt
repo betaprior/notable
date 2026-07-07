@@ -166,6 +166,19 @@ class InkStreamClient @Inject constructor(
         }
     }
 
+    /**
+     * Tell the receiver which page is active: ensure that page exists (creating pages as
+     * needed) and scroll xournal to it so the mirror follows the tablet. Sent on page
+     * navigation and when streaming is enabled. Discrete 1:1 page mapping.
+     */
+    fun setActivePage(pageIndex: Int) {
+        lastPageIndex = pageIndex
+        if (!isEnabled) return
+        val buf = header(MSG_SET_PAGE, 2)
+        buf.putShort(pageIndex.coerceIn(0, 65535).toShort())
+        enqueue(buf)
+    }
+
     /** Tell the receiver to remove strokes with these Notable ids (erase / scribble-erase). */
     fun deleteStrokes(strokeIds: List<String>) {
         if (!isEnabled || strokeIds.isEmpty()) return
@@ -285,6 +298,7 @@ class InkStreamClient @Inject constructor(
         private const val MSG_POINTS = 3
         private const val MSG_STROKE_END = 4
         private const val MSG_DELETE = 5
+        private const val MSG_SET_PAGE = 6
 
         // points per POINTS datagram for complete-stroke streaming: 6+16+4+100*12 = 1226 < MTU
         private const val POINTS_PER_DATAGRAM = 100
