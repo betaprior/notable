@@ -380,6 +380,11 @@ class PageView(
         updateHeightForChange(strokesToUpdate)
         pageDataManager.updateStrokesInDb(strokesToUpdate)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
+        // Mirror the change (e.g. moving/resizing a selection): remove the old rendering and
+        // re-stream at the new position. Same stroke id, so the group-delete clears every old
+        // fragment and the re-stream draws the updated one.
+        inkStream.deleteStrokes(strokesToUpdate.map { it.id })
+        inkStream.streamCompleteStrokes(strokesToUpdate)
 //        persistBitmapDebounced()
     }
 

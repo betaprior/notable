@@ -18,7 +18,7 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 
-const val HOLD_THRESHOLD_MS = 300
+const val HOLD_THRESHOLD_MS = 420
 private const val ONE_FINGER_TOUCH_TAP_TIME = 100L
 private const val TAP_MOVEMENT_TOLERANCE = 15f
 private const val SWIPE_THRESHOLD_SMOOTH = 100f

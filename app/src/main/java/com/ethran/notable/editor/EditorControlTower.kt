@@ -128,6 +128,19 @@ class EditorControlTower(
         viewModel.onToolbarAction(ToolbarAction.ChangeMode(if (mode == Mode.Draw) Mode.Erase else Mode.Draw))
     }
 
+    // Toggle the lasso: activate Select, or if already in Select return to the tool
+    // that was active before.
+    private var modeBeforeLasso: Mode = Mode.Draw
+    fun toggleLassoMode() {
+        val mode = viewModel.toolbarState.value.mode
+        if (mode == Mode.Select) {
+            viewModel.onToolbarAction(ToolbarAction.ChangeMode(modeBeforeLasso))
+        } else {
+            modeBeforeLasso = mode
+            viewModel.onToolbarAction(ToolbarAction.ChangeMode(Mode.Select))
+        }
+    }
+
     fun toggleZen() {
         viewModel.onToolbarAction(ToolbarAction.ToggleToolbar)
     }

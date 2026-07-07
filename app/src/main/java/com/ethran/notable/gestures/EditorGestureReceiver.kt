@@ -313,6 +313,8 @@ private fun resolveGesture(
 
         AppSettings.GestureAction.ChangeTool -> controlTower.toggleTool()
 
+        AppSettings.GestureAction.ToggleLasso -> controlTower.toggleLassoMode()
+
         AppSettings.GestureAction.ToggleZen -> controlTower.toggleZen()
 
         AppSettings.GestureAction.Undo -> controlTower.undo()
