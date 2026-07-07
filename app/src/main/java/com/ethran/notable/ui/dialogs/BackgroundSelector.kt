@@ -84,6 +84,8 @@ import com.ethran.notable.editor.drawing.drawDottedBg
 import com.ethran.notable.editor.drawing.drawHexedBg
 import com.ethran.notable.editor.drawing.drawLinedBg
 import com.ethran.notable.editor.drawing.drawSquaredBg
+import com.ethran.notable.editor.drawing.drawXournalGraphBg
+import com.ethran.notable.editor.drawing.drawXournalLinedBg
 import com.ethran.notable.editor.utils.autoEInkAnimationOnScroll
 import com.ethran.notable.io.getPdfPageCount
 import com.ethran.notable.ui.components.OnOffSwitch
@@ -360,7 +362,9 @@ fun ShowNativeOption(
         "dotted" to stringResource(R.string.dot_grid),
         "lined" to stringResource(R.string.lines),
         "squared" to stringResource(R.string.small_squares_grid),
-        "hexed" to stringResource(R.string.hexagon_grid)
+        "hexed" to stringResource(R.string.hexagon_grid),
+        "xournalLined" to "Xournal lines",
+        "xournalGraph" to "Xournal grid"
     )
 
     val context = LocalContext.current
@@ -387,6 +391,8 @@ fun ShowNativeOption(
                     "lined" -> drawLinedBg(canvas, Offset.Zero, 1f)
                     "squared" -> drawSquaredBg(canvas, Offset.Zero, 1f)
                     "hexed" -> drawHexedBg(canvas, Offset.Zero, 0.4f)
+                    "xournalLined" -> drawXournalLinedBg(canvas, Offset.Zero, 1f)
+                    "xournalGraph" -> drawXournalGraphBg(canvas, Offset.Zero, 1f)
                 }
 
                 FileOutputStream(file).use { out ->

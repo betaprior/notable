@@ -144,9 +144,11 @@ class XoppFile @Inject constructor(
         writer.write("\" height=\"")
         writer.write(height.toString())
         writer.write("\">\n")
-        // Preserve background style from page if it's a xournal-compatible style
+        // Preserve background style from page if it's a xournal-compatible style.
+        // The xournal-matching native styles map to their exact xoj ruling names.
         val bgStyle = when (pageWithData.page.background) {
-            "lined" -> "lined"
+            "xournalLined", "lined" -> "lined"
+            "xournalGraph", "squared" -> "graph"
             "ruled" -> "ruled"
             "graph" -> "graph"
             else -> "plain"
@@ -333,12 +335,14 @@ class XoppFile @Inject constructor(
 
         for (i in 0 until pages.length) {
             val pageElement = pages.item(i) as Element
-            val bgStyle = parseBackgroundStyle(pageElement)
-            val page = if (bgStyle != null && bgStyle != "plain") {
-                Page(background = bgStyle)
-            } else {
-                Page()
+            // Map xournal ruling names to Notable's xournal-matching native styles
+            // so the imported page renders (and re-exports) with identical geometry.
+            val nativeBg = when (parseBackgroundStyle(pageElement)) {
+                "lined", "ruled" -> "xournalLined"
+                "graph" -> "xournalGraph"
+                else -> null // "plain" / missing / unknown -> blank
             }
+            val page = if (nativeBg != null) Page(background = nativeBg) else Page()
             val strokes = parseStrokes(pageElement, page)
             val images = parseImages(pageElement, page)
             savePageToDatabase(PageWithData(page, strokes, images))

@@ -12,7 +12,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import com.ethran.notable.SCREEN_HEIGHT
 import com.ethran.notable.SCREEN_WIDTH
+import com.ethran.notable.data.datastore.A4_WIDTH
 import com.ethran.notable.data.datastore.GlobalAppSettings
+import kotlin.math.ceil
 import com.ethran.notable.data.model.BackgroundType
 import com.ethran.notable.editor.utils.scaleRect
 import com.onyx.android.sdk.extension.copy
@@ -30,6 +32,17 @@ const val padding = 0
 const val lineHeight = 80
 const val dotSize = 6f
 const val hexVerticalCount = 26
+
+// xournal-matching ruling geometry, in PostScript points (1pt = 1/72in), copied
+// from xournal's xo-misc.h so strokes land on identical lines/grid after the
+// point<->pixel round trip. Converted to device px via A4_WIDTH/SCREEN_WIDTH.
+const val XO_RULING_TOPMARGIN = 80.0f    // y of first horizontal line
+const val XO_RULING_SPACING = 24.0f      // gap between horizontal lines
+const val XO_RULING_LEFTMARGIN = 72.0f   // x of vertical margin line (lined only)
+const val XO_RULING_GRAPHSPACING = 14.17f // graph grid square (5mm)
+const val XO_RULING_THICKNESS = 0.5f     // line width in points
+const val XO_RULING_COLOR = 0xFF40A0FF.toInt()        // light blue (ARGB)
+const val XO_RULING_MARGIN_COLOR = 0xFFFF0080.toInt() // red/pink margin (ARGB)
 
 
 // Default paint for lines, dots, etc
@@ -97,6 +110,70 @@ fun drawDottedBg(canvas: Canvas, scroll: Offset, scale: Float) {
         }
     }
 
+}
+
+// px per point for this device (Notable maps page width A4_WIDTH pt -> SCREEN_WIDTH px)
+private fun pxPerPoint(): Float = SCREEN_WIDTH.toFloat() / A4_WIDTH
+
+// xournal-matching lined background: horizontal lines every 24pt from y=80pt,
+// plus a vertical margin line at x=72pt. Positions match xournal exactly after
+// the streamed/exported point<->pixel conversion.
+fun drawXournalLinedBg(canvas: Canvas, scroll: Offset, scale: Float) {
+    val height = canvas.height / scale
+    val width = canvas.width / scale
+    canvas.drawColor(Color.WHITE)
+
+    val ppp = pxPerPoint()
+    val linePaint = Paint().apply {
+        color = XO_RULING_COLOR
+        strokeWidth = max(1f, XO_RULING_THICKNESS * ppp)
+    }
+    val first = XO_RULING_TOPMARGIN * ppp
+    val spacing = XO_RULING_SPACING * ppp
+
+    var k = max(0, floor((scroll.y - first) / spacing).toInt())
+    while (true) {
+        val y = first + k * spacing - scroll.y
+        if (y > height) break
+        if (y >= 0) canvas.drawLine(0f, y, width, y, linePaint)
+        k++
+    }
+
+    val marginPaint = Paint().apply {
+        color = XO_RULING_MARGIN_COLOR
+        strokeWidth = max(1f, XO_RULING_THICKNESS * ppp)
+    }
+    val mx = XO_RULING_LEFTMARGIN * ppp - scroll.x
+    if (mx in 0f..width) canvas.drawLine(mx, 0f, mx, height, marginPaint)
+}
+
+// xournal-matching graph background: grid every 14.17pt (5mm) from a 14.17pt edge offset.
+fun drawXournalGraphBg(canvas: Canvas, scroll: Offset, scale: Float) {
+    val height = canvas.height / scale
+    val width = canvas.width / scale
+    canvas.drawColor(Color.WHITE)
+
+    val ppp = pxPerPoint()
+    val linePaint = Paint().apply {
+        color = XO_RULING_COLOR
+        strokeWidth = max(1f, XO_RULING_THICKNESS * ppp)
+    }
+    val spacing = XO_RULING_GRAPHSPACING * ppp
+
+    var m = max(1, ceil((scroll.y) / spacing).toInt())
+    while (true) {
+        val y = m * spacing - scroll.y
+        if (y > height) break
+        if (y >= 0) canvas.drawLine(0f, y, width, y, linePaint)
+        m++
+    }
+    var n = max(1, ceil((scroll.x) / spacing).toInt())
+    while (true) {
+        val x = n * spacing - scroll.x
+        if (x > width) break
+        if (x >= 0) canvas.drawLine(x, 0f, x, height, linePaint)
+        n++
+    }
 }
 
 fun drawSquaredBg(canvas: Canvas, scroll: Offset, scale: Float) {
@@ -291,8 +368,13 @@ fun drawBg(
                 "lined" -> drawLinedBg(canvas, scroll, scale)
                 "squared" -> drawSquaredBg(canvas, scroll, scale)
                 "hexed" -> drawHexedBg(canvas, scroll, scale)
+                "xournalLined" -> drawXournalLinedBg(canvas, scroll, scale)
+                "xournalGraph" -> drawXournalGraphBg(canvas, scroll, scale)
                 else -> {
-                    throw IllegalArgumentException("Unknown background type: $background")
+                    // Unknown native style (e.g. a xournal style we don't render):
+                    // fall back to blank instead of crashing.
+                    log.w("Unknown native background '$background', drawing blank")
+                    canvas.drawColor(Color.WHITE)
                 }
             }
         }
