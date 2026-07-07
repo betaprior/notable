@@ -1,6 +1,7 @@
 package com.ethran.notable.data.datastore
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.Snapshot
 import kotlinx.serialization.Serializable
 
 
@@ -15,8 +16,17 @@ object GlobalAppSettings {
     val current: AppSettings
         get() = _current.value
 
+    /**
+     * Updates the globally observed settings. This is a Compose snapshot state read all over the UI
+     * during composition, yet [update] is called from background coroutines (e.g. when persisting
+     * settings on Dispatchers.IO). Writing the snapshot state directly from a non-composition thread
+     * can race the recomposer and throw "Unsupported concurrent change during composition", so the
+     * write is committed inside its own global mutable snapshot.
+     */
     fun update(settings: AppSettings) {
-        _current.value = settings
+        Snapshot.withMutableSnapshot {
+            _current.value = settings
+        }
     }
 }
 
@@ -38,13 +48,13 @@ data class AppSettings(
     val visualizePdfPagination: Boolean = false,
 
     // Gestures
-    val doubleTapAction: GestureAction? = defaultDoubleTapAction,
-    val twoFingerTapAction: GestureAction? = defaultTwoFingerTapAction,
-    val swipeLeftAction: GestureAction? = defaultSwipeLeftAction,
-    val swipeRightAction: GestureAction? = defaultSwipeRightAction,
-    val twoFingerSwipeLeftAction: GestureAction? = defaultTwoFingerSwipeLeftAction,
-    val twoFingerSwipeRightAction: GestureAction? = defaultTwoFingerSwipeRightAction,
-    val holdAction: GestureAction? = defaultHoldAction,
+    val doubleTapAction: GestureAction = GestureAction.Undo,
+    val twoFingerTapAction: GestureAction = GestureAction.ChangeTool,
+    val swipeLeftAction: GestureAction = GestureAction.NextPage,
+    val swipeRightAction: GestureAction = GestureAction.PreviousPage,
+    val twoFingerSwipeLeftAction: GestureAction = GestureAction.ToggleZen,
+    val twoFingerSwipeRightAction: GestureAction = GestureAction.ToggleZen,
+    val holdAction: GestureAction = GestureAction.Select,
     val enableQuickNav: Boolean = true,
     val renameOnCreate: Boolean = true,
 
@@ -59,17 +69,17 @@ data class AppSettings(
 
     ) {
     companion object {
-        val defaultDoubleTapAction get() = GestureAction.Undo
-        val defaultTwoFingerTapAction get() = GestureAction.ChangeTool
-        val defaultSwipeLeftAction get() = GestureAction.NextPage
-        val defaultSwipeRightAction get() = GestureAction.PreviousPage
-        val defaultTwoFingerSwipeLeftAction get() = GestureAction.ToggleZen
-        val defaultTwoFingerSwipeRightAction get() = GestureAction.ToggleZen
-        val defaultHoldAction get() = GestureAction.Select
+        val defaultDoubleTapAction = GestureAction.Undo
+        val defaultTwoFingerTapAction = GestureAction.ChangeTool
+        val defaultSwipeLeftAction = GestureAction.NextPage
+        val defaultSwipeRightAction = GestureAction.PreviousPage
+        val defaultTwoFingerSwipeLeftAction = GestureAction.ToggleZen
+        val defaultTwoFingerSwipeRightAction = GestureAction.ToggleZen
+        val defaultHoldAction = GestureAction.Select
     }
 
     enum class GestureAction {
-        Undo, Redo, PreviousPage, NextPage, ChangeTool, ToggleZen, Select
+        None, Undo, Redo, PreviousPage, NextPage, ChangeTool, ToggleZen, Select
     }
 
     enum class Position {

@@ -91,7 +91,7 @@ fun SettingsView(
         viewModel.checkUpdate(context, force = false)
     }
 
-    @Suppress("KotlinConstantConditions") val versionString = remember {
+    val versionString = remember {
         "v${BuildConfig.VERSION_NAME}${if (isNext) " [NEXT]" else ""}"
     }
 
@@ -138,7 +138,7 @@ fun SettingsContent(
     onUpdateSettings: (AppSettings) -> Unit,
     selectedTabInitial: Int = 0,
     listOfGestures: List<GestureRowModel> = emptyList(),
-    availableGestures: List<Pair<AppSettings.GestureAction?, Any>> = emptyList(),
+    availableGestures: List<Pair<AppSettings.GestureAction, Any>> = emptyList(),
     syncUiState: SyncSettingsUiState = SyncSettingsUiState(),
     syncCallbacks: SyncSettingsCallbacks = SyncSettingsCallbacks(),
 ) {
@@ -146,7 +146,7 @@ fun SettingsContent(
     val tabs = listOf(
         stringResource(R.string.settings_tab_general_name),
         stringResource(R.string.settings_tab_gestures_name),
-        stringResource(R.string.settings_tab_sync_name),
+//        stringResource(R.string.settings_tab_sync_name),  // disabled upstream
         "Dropbox",
         "Ink Stream",
         stringResource(R.string.settings_tab_debug_name)
@@ -178,16 +178,17 @@ fun SettingsContent(
                         settings, onUpdateSettings, listOfGestures, availableGestures
                     )
 
-                    2 -> SyncSettings(
-                        state = syncUiState,
-                        callbacks = syncCallbacks,
-                    )
+//                    (sync tab disabled upstream)
+//                    -> SyncSettings(
+//                        state = syncUiState,
+//                        callbacks = syncCallbacks,
+//                    )
 
-                    3 -> DropboxSettingsTab()
+                    2 -> DropboxSettingsTab()
 
-                    4 -> InkStreamSettingsTab()
+                    3 -> InkStreamSettingsTab()
 
-                    5 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
+                    4 -> DebugSettings(settings, onUpdateSettings, goToWelcome, goToSystemInfo)
                 }
             }
 
@@ -386,11 +387,10 @@ fun SettingsPreviewGeneral() {
 fun SettingsPreviewGestures() {
     val dummyRows = listOf(
         GestureRowModel(
-            R.string.gestures_double_tap_action, null, AppSettings.defaultDoubleTapAction
+            R.string.gestures_double_tap_action, AppSettings.GestureAction.None
         ) { }, GestureRowModel(
             R.string.gestures_two_finger_tap_action,
-            AppSettings.GestureAction.Undo,
-            AppSettings.defaultTwoFingerTapAction
+            AppSettings.GestureAction.Undo
         ) { })
     InkaTheme {
         SettingsContent(

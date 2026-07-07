@@ -295,8 +295,8 @@ class DropboxSyncManager @Inject constructor(
         try {
             val exportTarget = com.ethran.notable.io.ExportTarget.Book(entry.notebookId)
             val baos = java.io.ByteArrayOutputStream()
-            val includePressure = entry.format != "xoj"
-            xoppFile.writeToStream(exportTarget, baos, includePressure)
+            if (entry.format == "xoj") xoppFile.writeToXojStream(exportTarget, baos)
+            else xoppFile.writeToXoppStream(exportTarget, baos)
             val bytes = baos.toByteArray()
 
             when (val uploadResult = client.upload(entry.dropboxPath, bytes)) {

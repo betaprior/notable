@@ -119,10 +119,10 @@ private fun isCacheFresh(file: File, pageUpdatedAtMs: Long?): Boolean {
 private fun buildPreviewFileName(pageID: String, scrollY: Int): String = "${pageID}-sy$scrollY.webp"
 
 val webpLossyFormat get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-    Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+    Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
 
 val webpLosslessFormat get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-    Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP
+    Bitmap.CompressFormat.WEBP_LOSSLESS else @Suppress("DEPRECATION") Bitmap.CompressFormat.WEBP
 
 /**
  *   Remove other variants for this page (legacy + other scrollY encodings)
@@ -133,9 +133,12 @@ private fun removeOldBitmaps(dir: File, latestPreview: String, pageID: String) {
             try {
                 if (f.delete()) {
                     log.d("saveHQPagePreview: removed old preview ${f.name}")
+                } else {
+                    // File may have already been deleted by a concurrent save for the same page.
+                    log.d("saveHQPagePreview: could not delete old preview ${f.name} (already gone or in use)")
                 }
-            } catch (_: Throwable) {
-                log.e("saveHQPagePreview: failed to delete old preview ${f.name}")
+            } catch (e: Throwable) {
+                log.w("saveHQPagePreview: exception deleting old preview ${f.name}", e)
             }
         }
     }
