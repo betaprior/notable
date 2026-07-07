@@ -2,7 +2,10 @@ package com.ethran.notable.ink
 
 import android.content.Context
 import android.util.Log
+import com.ethran.notable.SCREEN_WIDTH
+import com.ethran.notable.data.datastore.A4_WIDTH
 import com.ethran.notable.data.db.KvProxy
+import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.editor.utils.Pen
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -60,6 +63,14 @@ class InkStreamClient @Inject constructor(
     private var pointsSent = 0
     private val flushEvery = 3 // points per POINTS datagram
 
+    // Page index of the most recent live stroke; reused when streaming complete
+    // strokes (redo/paste/undo-of-erase) which don't carry their own index.
+    // MVP is current-page-only, so this matches the page being edited.
+    private var lastPageIndex = 0
+
+    // page coords -> xoj page points (matches XoppFile export)
+    private val scaleFactor: Float get() = A4_WIDTH.toFloat() / SCREEN_WIDTH
+
     init {
         scope.launch {
             for (datagram in sendChannel) trySend(datagram)
@@ -92,6 +103,7 @@ class InkStreamClient @Inject constructor(
         if (!isEnabled) return
         val uuid = uuidBytes(strokeId) ?: return
         currentUuid = uuid
+        lastPageIndex = pageIndex
         pointBuffer.clear()
         pointsSent = 0
 
@@ -103,6 +115,52 @@ class InkStreamClient @Inject constructor(
         buf.putInt(colorToRgba(pen, color))
         buf.putFloat(width)
         enqueue(buf)
+    }
+
+    /**
+     * Stream already-completed strokes (redo, undo-of-erase, paste, page cut/move) as
+     * begin+points+end, so the receiver renders them. The live-draw path must NOT call
+     * this (it streams incrementally); it passes alreadyStreamed=true to addStrokes.
+     */
+    fun streamCompleteStrokes(strokes: List<Stroke>) {
+        if (!isEnabled || strokes.isEmpty()) return
+        val sf = scaleFactor
+        for (stroke in strokes) {
+            val uuid = uuidBytes(stroke.id) ?: continue
+            val pts = stroke.points
+
+            val begin = header(MSG_STROKE_BEGIN, 16 + 2 + 1 + 1 + 4 + 4)
+            begin.put(uuid)
+            begin.putShort(lastPageIndex.coerceIn(0, 65535).toShort())
+            begin.put(penToTool(stroke.pen))
+            begin.put(0)
+            begin.putInt(colorToRgba(stroke.pen, stroke.color))
+            begin.putFloat(stroke.size * sf)
+            enqueue(begin)
+
+            val maxP = stroke.maxPressure.toFloat().takeIf { it > 0f } ?: 4096f
+            var i = 0
+            while (i < pts.size) {
+                val n = minOf(POINTS_PER_DATAGRAM, pts.size - i)
+                val buf = header(MSG_POINTS, 16 + 2 + 2 + n * 12)
+                buf.put(uuid)
+                buf.putShort(i.toShort())
+                buf.putShort(n.toShort())
+                for (j in i until i + n) {
+                    val p = pts[j]
+                    buf.putFloat(p.x * sf)
+                    buf.putFloat(p.y * sf)
+                    buf.putFloat(((p.pressure ?: maxP) / maxP).coerceIn(0f, 1f))
+                }
+                enqueue(buf)
+                i += n
+            }
+
+            val end = header(MSG_STROKE_END, 16 + 2)
+            end.put(uuid)
+            end.putShort(pts.size.coerceIn(0, 65535).toShort())
+            enqueue(end)
+        }
     }
 
     /** Tell the receiver to remove strokes with these Notable ids (erase / scribble-erase). */
@@ -224,6 +282,9 @@ class InkStreamClient @Inject constructor(
         private const val MSG_POINTS = 3
         private const val MSG_STROKE_END = 4
         private const val MSG_DELETE = 5
+
+        // points per POINTS datagram for complete-stroke streaming: 6+16+4+100*12 = 1226 < MTU
+        private const val POINTS_PER_DATAGRAM = 100
 
         private const val TOOL_PEN = 0
         private const val TOOL_HIGHLIGHTER = 2

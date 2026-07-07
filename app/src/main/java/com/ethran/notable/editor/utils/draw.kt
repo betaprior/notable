@@ -39,7 +39,8 @@ fun handleDraw(
             color = color,
             maxPressure = EpdController.getMaxTouchPressure().toInt()
         )
-        page.addStrokes(listOf(stroke))
+        // Live-draw path already streamed this stroke via begin/points/end.
+        page.addStrokes(listOf(stroke), alreadyStreamed = true)
         // this is causing lagging and crushing, neo pens are not good
         page.drawAreaPageCoordinates(strokeBounds(stroke).toRect())
         historyBucket.add(stroke.id)

@@ -322,12 +322,19 @@ class PageView(
     }
 
 
-    fun addStrokes(strokesToAdd: List<Stroke>) {
+    /**
+     * @param alreadyStreamed true when the caller already mirrored these strokes to a live
+     *   receiver via the per-point stream (the live-draw path). All other add routes
+     *   (redo, undo-of-erase, paste, page cut/move) leave it false so the strokes are
+     *   streamed here as complete strokes.
+     */
+    fun addStrokes(strokesToAdd: List<Stroke>, alreadyStreamed: Boolean = false) {
         strokes += strokesToAdd
         updateHeightForChange(strokesToAdd)
 
         saveStrokesToPersistLayer(strokesToAdd)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
+        if (!alreadyStreamed) inkStream.streamCompleteStrokes(strokesToAdd)
 
 //        persistBitmapDebounced()
     }
