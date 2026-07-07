@@ -75,6 +75,9 @@ class InkStreamClient @Inject constructor(
         scope.launch {
             for (datagram in sendChannel) trySend(datagram)
         }
+        // Load persisted settings as soon as the singleton exists, so streaming
+        // resumes after an app restart without having to reopen the settings tab.
+        loadSettings()
     }
 
     fun loadSettings() {

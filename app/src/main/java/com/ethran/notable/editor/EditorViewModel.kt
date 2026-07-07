@@ -176,7 +176,11 @@ class EditorViewModel @Inject constructor(
     val snackDispatcher: SnackDispatcher,
     private val historyFactory: History.Factory,
     @param:ApplicationScope private val appScope: CoroutineScope,
-    private val dropboxSyncManager: com.ethran.notable.dropbox.DropboxSyncManager
+    private val dropboxSyncManager: com.ethran.notable.dropbox.DropboxSyncManager,
+    // Injected so the singleton is created (and its persisted settings loaded)
+    // when the editor opens, rather than lazily on the first stroke -- otherwise
+    // streaming stays off after an app restart until the settings tab is reopened.
+    private val inkStreamClient: com.ethran.notable.ink.InkStreamClient
 ) : ViewModel() {
     // ---- Toolbar / UI State (single flat flow) ----
     private val _toolbarState = MutableStateFlow(ToolbarUiState())
