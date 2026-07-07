@@ -28,7 +28,7 @@ import com.ethran.notable.editor.utils.setupSurface
 import com.ethran.notable.editor.utils.transformToLine
 import com.ethran.notable.ui.convertDpToPixel
 import com.ethran.notable.SCREEN_WIDTH
-import com.ethran.notable.data.datastore.A4_WIDTH
+import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.ink.InkStreamClient
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -64,8 +64,8 @@ class OnyxInputHandler(
     // Id assigned to the in-progress streamed stroke at pen-down; reused as the
     // Notable Stroke.id so streamed strokes and later deletes share identity.
     private var pendingStrokeId: String? = null
-    // screen px -> xoj page points, matching XoppFile export (A4_WIDTH / SCREEN_WIDTH)
-    private val xojScale: Float get() = A4_WIDTH.toFloat() / SCREEN_WIDTH
+    // screen px -> xoj page points, matching XoppFile export (pageWidthPt / SCREEN_WIDTH)
+    private val xojScale: Float get() = pageWidthPt.toFloat() / SCREEN_WIDTH
 
     // TODO: As OnyxInput is not done by lazy, which forces evaluation of the touchHelper
     //       lazy during DrawCanvas construction.

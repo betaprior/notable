@@ -12,7 +12,7 @@ import androidx.core.net.toUri
 import com.ethran.notable.BuildConfig
 import com.ethran.notable.SCREEN_HEIGHT
 import com.ethran.notable.SCREEN_WIDTH
-import com.ethran.notable.data.datastore.A4_WIDTH
+import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.data.db.BookRepository
 import com.ethran.notable.data.db.Image
 import com.ethran.notable.data.db.Page
@@ -62,7 +62,7 @@ class XoppFile @Inject constructor(
     private val appEventBus: AppEventBus,
 ) {
     private val log = ShipBook.getLogger("XoppFile")
-    private val scaleFactor = A4_WIDTH.toFloat() / SCREEN_WIDTH
+    private val scaleFactor get() = pageWidthPt.toFloat() / SCREEN_WIDTH
     private val maxPressure = EpdController.getMaxTouchPressure()
 
     /**
@@ -159,7 +159,7 @@ class XoppFile @Inject constructor(
             val height = strokeHeight.coerceAtLeast(SCREEN_HEIGHT) * scaleFactor
 
             writer.write("<page width=\"")
-            writer.write(A4_WIDTH.toString())
+            writer.write(pageWidthPt.toString())
             writer.write("\" height=\"")
             writer.write(height.toString())
             writer.write("\">\n")

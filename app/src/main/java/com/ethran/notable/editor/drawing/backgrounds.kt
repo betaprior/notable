@@ -12,8 +12,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import com.ethran.notable.SCREEN_HEIGHT
 import com.ethran.notable.SCREEN_WIDTH
-import com.ethran.notable.data.datastore.A4_WIDTH
 import com.ethran.notable.data.datastore.GlobalAppSettings
+import com.ethran.notable.data.datastore.pageHeightPt
+import com.ethran.notable.data.datastore.pageWidthPt
 import kotlin.math.ceil
 import com.ethran.notable.data.model.BackgroundType
 import com.ethran.notable.editor.utils.scaleRect
@@ -35,7 +36,7 @@ const val hexVerticalCount = 26
 
 // xournal-matching ruling geometry, in PostScript points (1pt = 1/72in), copied
 // from xournal's xo-misc.h so strokes land on identical lines/grid after the
-// point<->pixel round trip. Converted to device px via A4_WIDTH/SCREEN_WIDTH.
+// point<->pixel round trip. Converted to device px via pageWidthPt/SCREEN_WIDTH.
 const val XO_RULING_TOPMARGIN = 80.0f    // y of first horizontal line
 const val XO_RULING_SPACING = 24.0f      // gap between horizontal lines
 const val XO_RULING_LEFTMARGIN = 72.0f   // x of vertical margin line (lined only)
@@ -112,8 +113,8 @@ fun drawDottedBg(canvas: Canvas, scroll: Offset, scale: Float) {
 
 }
 
-// px per point for this device (Notable maps page width A4_WIDTH pt -> SCREEN_WIDTH px)
-private fun pxPerPoint(): Float = SCREEN_WIDTH.toFloat() / A4_WIDTH
+// px per point for this device (Notable maps page width pageWidthPt -> SCREEN_WIDTH px)
+private fun pxPerPoint(): Float = SCREEN_WIDTH.toFloat() / pageWidthPt
 
 // xournal-matching lined background: horizontal lines every 24pt from y=80pt,
 // plus a vertical margin line at x=72pt. Positions match xournal exactly after
@@ -420,10 +421,10 @@ fun drawPaginationLine(canvas: Canvas, scroll: Offset, scale: Float) {
         isAntiAlias = true
     }
 
-    // A4 paper ratio (height/width in portrait)
-    val a4Ratio = 297f / 210f
+    // Page boundary at the configured page height (px), so it matches the xournal
+    // page break the strokes are streamed into.
     val screenWidth = min(SCREEN_HEIGHT, SCREEN_WIDTH)
-    val pageHeight = screenWidth * a4Ratio
+    val pageHeight = pageHeightPt * pxPerPoint()
 
     // Convert scroll position to canvas coordinates
     // Calculate current page number (1-based)

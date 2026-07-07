@@ -5,10 +5,20 @@ import androidx.compose.runtime.snapshots.Snapshot
 import kotlinx.serialization.Serializable
 
 
-// Define the target page size (A4 in points: 595 x 842)
+// Legacy A4 constants (points). Prefer the configurable pageWidthPt/pageHeightPt.
 const val A4_WIDTH = 595
 const val A4_HEIGHT = 842
 const val BUTTON_SIZE = 37
+
+/** Target page size in PostScript points (1pt = 1/72"). */
+enum class PageSize(val widthPt: Int, val heightPt: Int) {
+    Letter(612, 792), // US Letter 8.5 x 11"
+    A4(595, 842),     // ISO A4 210 x 297mm
+}
+
+/** Configured page width/height in points (used for export, streaming, backgrounds). */
+val pageWidthPt: Int get() = GlobalAppSettings.current.pageSize.widthPt
+val pageHeightPt: Int get() = GlobalAppSettings.current.pageSize.heightPt
 
 
 object GlobalAppSettings {
@@ -45,7 +55,9 @@ data class AppSettings(
     val continuousStrokeSlider: Boolean = false,
     val monochromeMode: Boolean = false,
     val paginatePdf: Boolean = true,
-    val visualizePdfPagination: Boolean = false,
+    // Notable pages are continuous (growable), so show the page-boundary guide by default.
+    val visualizePdfPagination: Boolean = true,
+    val pageSize: PageSize = PageSize.Letter,
 
     // Gestures
     val doubleTapAction: GestureAction = GestureAction.Undo,

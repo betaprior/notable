@@ -12,8 +12,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.core.net.toUri
 import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.data.AppRepository
-import com.ethran.notable.data.datastore.A4_HEIGHT
-import com.ethran.notable.data.datastore.A4_WIDTH
+import com.ethran.notable.data.datastore.pageHeightPt
+import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.data.events.AppEvent
 import com.ethran.notable.data.events.AppEventBus
@@ -396,7 +396,7 @@ class ExportEngine @Inject constructor(
         val data = pageContentRenderer.loadPageContent(pageId) ?: return
         val (_, contentHeightPx) = pageContentRenderer.computeContentDimensions(data)
 
-        val scaleFactor = A4_WIDTH.toFloat() / SCREEN_WIDTH.toFloat()
+        val scaleFactor = pageWidthPt.toFloat() / SCREEN_WIDTH.toFloat()
         val scaledHeight = (contentHeightPx * scaleFactor).toInt()
 
         if (GlobalAppSettings.current.paginatePdf) {
@@ -404,7 +404,7 @@ class ExportEngine @Inject constructor(
             var logicalPageNumber = pageNumber
             while (currentTop < scaledHeight) {
                 val pageInfo =
-                    PdfDocument.PageInfo.Builder(A4_WIDTH, A4_HEIGHT, logicalPageNumber).create()
+                    PdfDocument.PageInfo.Builder(pageWidthPt, pageHeightPt, logicalPageNumber).create()
                 val page = doc.startPage(pageInfo)
                 pageContentRenderer.drawPage(
                     canvas = page.canvas,
@@ -413,11 +413,11 @@ class ExportEngine @Inject constructor(
                     scaleFactor = scaleFactor,
                 )
                 doc.finishPage(page)
-                currentTop += A4_HEIGHT
+                currentTop += pageHeightPt
                 logicalPageNumber++
             }
         } else {
-            val pageInfo = PdfDocument.PageInfo.Builder(A4_WIDTH, scaledHeight, pageNumber).create()
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidthPt, scaledHeight, pageNumber).create()
             val page = doc.startPage(pageInfo)
             pageContentRenderer.drawPage(
                 canvas = page.canvas,

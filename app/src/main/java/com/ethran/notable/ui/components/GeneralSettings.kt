@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.ethran.notable.R
 import com.ethran.notable.data.datastore.AppSettings
+import com.ethran.notable.data.datastore.PageSize
 
 
 @Composable
@@ -22,6 +23,15 @@ fun GeneralSettings(
             ), value = settings.defaultNativeTemplate, onValueChange = {
                 onSettingsChange(settings.copy(defaultNativeTemplate = it))
             })
+        SelectorRow(
+            label = "Page size",
+            options = listOf(
+                PageSize.Letter to "US Letter",
+                PageSize.A4 to "A4",
+            ),
+            value = settings.pageSize,
+            onValueChange = { onSettingsChange(settings.copy(pageSize = it)) }
+        )
         SelectorRow(
             label = stringResource(R.string.toolbar_position), options = listOf(
                 AppSettings.Position.Top to stringResource(R.string.toolbar_position_top),

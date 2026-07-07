@@ -3,7 +3,8 @@ package com.ethran.notable.ink
 import android.content.Context
 import android.util.Log
 import com.ethran.notable.SCREEN_WIDTH
-import com.ethran.notable.data.datastore.A4_WIDTH
+import com.ethran.notable.data.datastore.pageHeightPt
+import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.data.db.KvProxy
 import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.editor.utils.Pen
@@ -69,7 +70,7 @@ class InkStreamClient @Inject constructor(
     private var lastPageIndex = 0
 
     // page coords -> xoj page points (matches XoppFile export)
-    private val scaleFactor: Float get() = A4_WIDTH.toFloat() / SCREEN_WIDTH
+    private val scaleFactor: Float get() = pageWidthPt.toFloat() / SCREEN_WIDTH
 
     init {
         scope.launch {
@@ -174,8 +175,12 @@ class InkStreamClient @Inject constructor(
     fun setActivePage(pageIndex: Int) {
         lastPageIndex = pageIndex
         if (!isEnabled) return
-        val buf = header(MSG_SET_PAGE, 2)
+        // index + this tablet's configured page size, so the receiver can warn if the
+        // document it opened has a different page size (misaligned strokes).
+        val buf = header(MSG_SET_PAGE, 2 + 2 + 2)
         buf.putShort(pageIndex.coerceIn(0, 65535).toShort())
+        buf.putShort(pageWidthPt.coerceIn(0, 65535).toShort())
+        buf.putShort(pageHeightPt.coerceIn(0, 65535).toShort())
         enqueue(buf)
     }
 
