@@ -61,6 +61,9 @@ class OnyxInputHandler(
 
     // Live ink streaming (Phase 1: one-way mirror to xournal over UDP).
     private val inkStream: InkStreamClient by lazy { InkStreamClient.from(drawCanvas.context) }
+    // Id assigned to the in-progress streamed stroke at pen-down; reused as the
+    // Notable Stroke.id so streamed strokes and later deletes share identity.
+    private var pendingStrokeId: String? = null
     // screen px -> xoj page points, matching XoppFile export (A4_WIDTH / SCREEN_WIDTH)
     private val xojScale: Float get() = A4_WIDTH.toFloat() / SCREEN_WIDTH
 
@@ -89,7 +92,12 @@ class OnyxInputHandler(
             if (!inkStream.isEnabled || toolbarState.mode != Mode.Draw) return
             val pen = toolbarState.pen
             val settings = toolbarState.penSettings[pen.penName] ?: return
+            // Pre-generate the stroke id so the streamed stroke and the Notable
+            // Stroke created later in handleDraw share identity -> deletes line up.
+            val strokeId = java.util.UUID.randomUUID().toString()
+            pendingStrokeId = strokeId
             inkStream.strokeBegin(
+                strokeId = strokeId,
                 pageIndex = toolbarState.currentPageNumber,
                 pen = pen,
                 color = settings.color,
@@ -307,17 +315,22 @@ class OnyxInputHandler(
                         )
                         if (erasedByScribbleDirtyRect.isNullOrEmpty()) {
                             log.d("Drawing...")
-                            // draw the stroke
+                            // draw the stroke, reusing the streamed stroke id so the
+                            // mirrored stroke and the Notable stroke share identity
                             handleDraw(
                                 drawCanvas.page,
                                 strokeHistoryBatch,
                                 toolbarState.penSettings[toolbarState.pen.penName]!!.strokeSize,
                                 toolbarState.penSettings[toolbarState.pen.penName]!!.color,
                                 toolbarState.pen,
-                                scaledPoints
+                                scaledPoints,
+                                strokeId = pendingStrokeId
                             )
                         } else {
                             log.d("Erased by scribble, $erasedByScribbleDirtyRect")
+                            // The scribble was already streamed as a stroke; tell the
+                            // receiver to remove that preview since it became an erase.
+                            pendingStrokeId?.let { inkStream.deleteStrokes(listOf(it)) }
                             // Union the scribble track (firmware screen coords) with the erased
                             // strokes' bounds so commitErase overwrites both in one pass while
                             // still frozen. Scribble is not drawn into the page bitmap — we only

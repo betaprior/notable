@@ -84,9 +84,13 @@ class InkStreamClient @Inject constructor(
 
     // ---- stroke lifecycle (called from the drawing thread) ----
 
-    fun strokeBegin(pageIndex: Int, pen: Pen, color: Int, width: Float) {
+    /**
+     * @param strokeId the Notable Stroke.id (a UUID string) this stroke will get, so the
+     *   receiver keys it identically and later DELETEs by the same id line up.
+     */
+    fun strokeBegin(strokeId: String, pageIndex: Int, pen: Pen, color: Int, width: Float) {
         if (!isEnabled) return
-        val uuid = newUuid()
+        val uuid = uuidBytes(strokeId) ?: return
         currentUuid = uuid
         pointBuffer.clear()
         pointsSent = 0
@@ -99,6 +103,20 @@ class InkStreamClient @Inject constructor(
         buf.putInt(colorToRgba(pen, color))
         buf.putFloat(width)
         enqueue(buf)
+    }
+
+    /** Tell the receiver to remove strokes with these Notable ids (erase / scribble-erase). */
+    fun deleteStrokes(strokeIds: List<String>) {
+        if (!isEnabled || strokeIds.isEmpty()) return
+        // chunk so each datagram stays well under the MTU (2 + 16*n bytes)
+        strokeIds.chunked(64).forEach { chunk ->
+            val uuids = chunk.mapNotNull { uuidBytes(it) }
+            if (uuids.isEmpty()) return@forEach
+            val buf = header(MSG_DELETE, 2 + 16 * uuids.size)
+            buf.putShort(uuids.size.toShort())
+            uuids.forEach { buf.put(it) }
+            enqueue(buf)
+        }
     }
 
     /** x,y in xoj page points; pressure normalized 0..1. */
@@ -176,12 +194,17 @@ class InkStreamClient @Inject constructor(
         return buf
     }
 
-    private fun newUuid(): ByteArray {
-        val u = UUID.randomUUID()
-        return ByteBuffer.allocate(16)
-            .putLong(u.mostSignificantBits)
-            .putLong(u.leastSignificantBits)
-            .array()
+    /** Encode a UUID string as 16 big-endian bytes, or null if it isn't a UUID. */
+    private fun uuidBytes(id: String): ByteArray? {
+        return try {
+            val u = UUID.fromString(id)
+            ByteBuffer.allocate(16)
+                .putLong(u.mostSignificantBits)
+                .putLong(u.leastSignificantBits)
+                .array()
+        } catch (_: IllegalArgumentException) {
+            null
+        }
     }
 
     @EntryPoint
@@ -200,6 +223,7 @@ class InkStreamClient @Inject constructor(
         private const val MSG_STROKE_BEGIN = 2
         private const val MSG_POINTS = 3
         private const val MSG_STROKE_END = 4
+        private const val MSG_DELETE = 5
 
         private const val TOOL_PEN = 0
         private const val TOOL_HIGHLIGHTER = 2

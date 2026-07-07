@@ -17,7 +17,8 @@ fun handleDraw(
     strokeSize: Float,
     color: Int,
     pen: Pen,
-    touchPoints: List<StrokePoint>
+    touchPoints: List<StrokePoint>,
+    strokeId: String? = null
 ) {
     try {
         val boundingBox = calculateBoundingBox(touchPoints) { Pair(it.x, it.y) }
@@ -26,6 +27,7 @@ fun handleDraw(
         boundingBox.inset(-strokeSize, -strokeSize)
 
         val stroke = Stroke(
+            id = strokeId ?: java.util.UUID.randomUUID().toString(),
             size = strokeSize,
             pen = pen,
             pageId = page.currentPageId,

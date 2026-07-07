@@ -84,6 +84,11 @@ class PageView(
     val log = ShipBook.getLogger("PageView")
     private val logCache = ShipBook.getLogger("PageViewCache")
 
+    // Live ink streaming: mirror stroke deletions to a connected receiver.
+    private val inkStream by lazy {
+        com.ethran.notable.ink.InkStreamClient.from(context)
+    }
+
     private var loadingJob: Job? = null
 
     @Volatile
@@ -373,6 +378,8 @@ class PageView(
         removeStrokesFromPersistLayer(strokeIds)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
         pageDataManager.recomputeHeight(currentPageId)
+        // Mirror erases (eraser tool, scribble-erase, clear-all) to a live receiver.
+        inkStream.deleteStrokes(strokeIds)
 
 //        persistBitmapDebounced()
     }
