@@ -28,6 +28,8 @@ import com.ethran.notable.editor.utils.setupSurface
 import com.ethran.notable.editor.utils.transformToLine
 import com.ethran.notable.ui.convertDpToPixel
 import com.ethran.notable.SCREEN_WIDTH
+import com.ethran.notable.data.datastore.GlobalAppSettings
+import com.ethran.notable.data.datastore.SideButtonAction
 import com.ethran.notable.data.datastore.pageHeightPt
 import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.ink.InkStreamClient
@@ -253,7 +255,7 @@ class OnyxInputHandler(
         val startTime = System.currentTimeMillis()
 
         when (toolbarState.mode) {
-            Mode.Erase -> onRawErasingList(plist)
+            Mode.Erase -> onRawErasingList(plist, fromButton = false)
             Mode.Select -> {
                 thread {
                     val points =
@@ -392,11 +394,33 @@ class OnyxInputHandler(
         inkStream.strokePoint(xojX, xojY, (p.pressure / maxP).coerceIn(0f, 1f))
     }
 
-    private fun onRawErasingList(plist: TouchPointList?) {
+    private fun onRawErasingList(plist: TouchPointList?, fromButton: Boolean = true) {
         isErasing = false
 
         if (plist == null) return
         val points = copyInputToSimplePointF(plist.points, page.scroll, page.zoomLevel.value)
+
+        // Remap the pen's hardware erase (side button / eraser tip) to a lasso select when
+        // configured. Only the hardware input is remapped; the toolbar Erase tool
+        // (fromButton == false) always erases.
+        if (fromButton &&
+            GlobalAppSettings.current.sideButtonAction == SideButtonAction.Select
+        ) {
+            thread {
+                handleSelect(
+                    scope = coroutineScope,
+                    page = drawCanvas.page,
+                    viewModel = viewModel,
+                    points = points
+                )
+                val bb = calculateBoundingBox(points) { Pair(it.x, it.y) }.toRect()
+                val pad = 10
+                drawCanvas.refreshManager.refreshUi(
+                    Rect(bb.left - pad, bb.top - pad, bb.right + pad, bb.bottom + pad)
+                )
+            }
+            return
+        }
 
         val padding = 10
         val boundingBox = (calculateBoundingBox(plist.points) { Pair(it.x, it.y) }).toRect()

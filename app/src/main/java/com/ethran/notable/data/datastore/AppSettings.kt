@@ -20,6 +20,9 @@ enum class PageSize(val widthPt: Int, val heightPt: Int) {
 val pageWidthPt: Int get() = GlobalAppSettings.current.pageSize.widthPt
 val pageHeightPt: Int get() = GlobalAppSettings.current.pageSize.heightPt
 
+/** What the pen's hardware erase input (side button / eraser tip) triggers. */
+enum class SideButtonAction { Erase, Select }
+
 
 object GlobalAppSettings {
     private val _current = mutableStateOf(AppSettings(version = 1))
@@ -58,6 +61,9 @@ data class AppSettings(
     // Notable pages are continuous (growable), so show the page-boundary guide by default.
     val visualizePdfPagination: Boolean = true,
     val pageSize: PageSize = PageSize.Letter,
+    // What the pen's hardware erase input (side button / eraser tip) does. The Onyx SDK
+    // can't tell the side button from the eraser tip, so this applies to both.
+    val sideButtonAction: SideButtonAction = SideButtonAction.Erase,
 
     // Gestures
     val doubleTapAction: GestureAction = GestureAction.Undo,
