@@ -348,4 +348,16 @@ data class GestureState(
                 gestureDuration < TWO_FINGER_TOUCH_TAP_MAX_TIME &&
                 gestureDuration > TWO_FINGER_TOUCH_TAP_MIN_TIME
     }
+
+    /**
+     * Distance (px) between the two contacts' landing points, or null if there aren't
+     * exactly two. Used to reject palm contacts: two real fingers land a plausible
+     * distance apart, whereas a palm's blob-pair tends to be either merged (very close)
+     * or spread wider than a two-finger tap.
+     */
+    fun getFingersSeparation(): Float? {
+        if (initialPositions.size != 2) return null
+        val it = initialPositions.values.iterator()
+        return calculateDistance(it.next(), it.next())
+    }
 }

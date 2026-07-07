@@ -33,6 +33,13 @@ import kotlin.math.abs
 
 private val log = ShipBook.getLogger("GestureReceiver")
 
+// Palm rejection for the two-finger-tap action: accept only when the two contacts
+// land within a finger-plausible separation band (px). ~300 dpi on the Go 10.3, so
+// 120px ~= 1cm, 850px ~= 7.2cm. Below the min = merged palm blobs; above the max =
+// a palm patch wider than a real two-finger tap. Tune for your hand / device.
+private const val TWO_FINGER_MIN_SEPARATION = 120f
+private const val TWO_FINGER_MAX_SEPARATION = 850f
+
 
 @Composable
 fun EditorGestureReceiver(
@@ -218,13 +225,25 @@ fun EditorGestureReceiver(
                         } else if (gestureState.isTwoFingers()) {
                             log.v("Two finger tap")
                             if (gestureState.isTwoFingersTap()) {
-                                resolveGesture(
-                                    settings = appSettings,
-                                    default = AppSettings.defaultTwoFingerTapAction,
-                                    override = AppSettings::twoFingerTapAction,
-                                    scope = coroutineScope,
-                                    controlTower = controlTower
-                                )
+                                // Palm rejection by geometry: only accept when the two
+                                // contacts land a finger-plausible distance apart. A palm's
+                                // blob-pair is usually merged (too close) or spread wider
+                                // than a two-finger tap.
+                                val sep = gestureState.getFingersSeparation()
+                                log.d("Two-finger tap separation: ${sep}px")
+                                if (sep != null &&
+                                    sep in TWO_FINGER_MIN_SEPARATION..TWO_FINGER_MAX_SEPARATION
+                                ) {
+                                    resolveGesture(
+                                        settings = appSettings,
+                                        default = AppSettings.defaultTwoFingerTapAction,
+                                        override = AppSettings::twoFingerTapAction,
+                                        scope = coroutineScope,
+                                        controlTower = controlTower
+                                    )
+                                } else {
+                                    log.d("Suppressed two-finger tap: separation ${sep}px out of band")
+                                }
                             }
                             // zoom gesture
                             val zoomDelta = gestureState.getPinchDrag()
