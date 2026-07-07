@@ -116,7 +116,7 @@ class OnyxInputHandler(
             }
             inkStream.strokeBegin(
                 strokeId = strokeId,
-                pageIndex = vpage,
+                band = vpage,
                 pen = pen,
                 color = settings.color,
                 width = settings.strokeSize * xojScale

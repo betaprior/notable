@@ -101,25 +101,40 @@ class InkStreamClient @Inject constructor(
     // ---- stroke lifecycle (called from the drawing thread) ----
 
     /**
-     * @param strokeId the Notable Stroke.id (a UUID string) this stroke will get, so the
-     *   receiver keys it identically and later DELETEs by the same id line up.
+     * Begin the live fragment for the stroke's first band. A stroke that straddles page
+     * boundaries is mirrored as one fragment per band, all sharing group id [strokeId];
+     * the fragment for [band] is keyed by fragUuid(strokeId, band). Other bands are sent
+     * at pen-up via [streamStrokeExtraBands].
      */
-    fun strokeBegin(strokeId: String, pageIndex: Int, pen: Pen, color: Int, width: Float) {
+    fun strokeBegin(strokeId: String, band: Int, pen: Pen, color: Int, width: Float) {
         if (!isEnabled) return
-        val uuid = uuidBytes(strokeId) ?: return
-        currentUuid = uuid
-        lastPageIndex = pageIndex
+        val group = uuidBytes(strokeId) ?: return
+        val frag = fragUuid(group, band)
+        currentUuid = frag
+        lastPageIndex = band
         pointBuffer.clear()
         pointsSent = 0
+        sendBegin(frag, group, band, penToTool(pen), colorToRgba(pen, color), width)
+    }
 
-        val buf = header(MSG_STROKE_BEGIN, 16 + 2 + 1 + 1 + 4 + 4)
-        buf.put(uuid)
-        buf.putShort(pageIndex.coerceIn(0, 65535).toShort())
-        buf.put(penToTool(pen))
+    private fun sendBegin(frag: ByteArray, group: ByteArray, band: Int, tool: Byte, rgba: Int, width: Float) {
+        val buf = header(MSG_STROKE_BEGIN, 16 + 16 + 2 + 1 + 1 + 4 + 4)
+        buf.put(frag)
+        buf.put(group)
+        buf.putShort(band.coerceIn(0, 65535).toShort())
+        buf.put(tool)
         buf.put(0)
-        buf.putInt(colorToRgba(pen, color))
+        buf.putInt(rgba)
         buf.putFloat(width)
         enqueue(buf)
+    }
+
+    /** Distinct 16-byte id for a stroke's fragment on [band] (band 0 == the group id). */
+    private fun fragUuid(group: ByteArray, band: Int): ByteArray {
+        val f = group.copyOf()
+        f[14] = (f[14].toInt() xor ((band ushr 8) and 0xff)).toByte()
+        f[15] = (f[15].toInt() xor (band and 0xff)).toByte()
+        return f
     }
 
     /**
@@ -130,50 +145,80 @@ class InkStreamClient @Inject constructor(
     fun streamCompleteStrokes(strokes: List<Stroke>) {
         if (!isEnabled || strokes.isEmpty()) return
         val sf = scaleFactor
-        val pageHeight = pageHeightPt.toFloat()
+        val ph = pageHeightPt.toFloat()
         for (stroke in strokes) {
-            val uuid = uuidBytes(stroke.id) ?: continue
-            val pts = stroke.points
-            if (pts.isEmpty()) continue
-
-            // Continuous-page mapping: bind the stroke to the virtual page of its
-            // first point and make y page-local (matches the live-draw path).
-            val vpage = if (pageHeight > 0)
-                floor(pts.first().y * sf / pageHeight).toInt().coerceAtLeast(0) else 0
-            val yOffset = vpage * pageHeight
-
-            val begin = header(MSG_STROKE_BEGIN, 16 + 2 + 1 + 1 + 4 + 4)
-            begin.put(uuid)
-            begin.putShort(vpage.coerceIn(0, 65535).toShort())
-            begin.put(penToTool(stroke.pen))
-            begin.put(0)
-            begin.putInt(colorToRgba(stroke.pen, stroke.color))
-            begin.putFloat(stroke.size * sf)
-            enqueue(begin)
-
-            val maxP = stroke.maxPressure.toFloat().takeIf { it > 0f } ?: 4096f
-            var i = 0
-            while (i < pts.size) {
-                val n = minOf(POINTS_PER_DATAGRAM, pts.size - i)
-                val buf = header(MSG_POINTS, 16 + 2 + 2 + n * 12)
-                buf.put(uuid)
-                buf.putShort(i.toShort())
-                buf.putShort(n.toShort())
-                for (j in i until i + n) {
-                    val p = pts[j]
-                    buf.putFloat(p.x * sf)
-                    buf.putFloat(p.y * sf - yOffset)
-                    buf.putFloat(((p.pressure ?: maxP) / maxP).coerceIn(0f, 1f))
-                }
-                enqueue(buf)
-                i += n
-            }
-
-            val end = header(MSG_STROKE_END, 16 + 2)
-            end.put(uuid)
-            end.putShort(pts.size.coerceIn(0, 65535).toShort())
-            enqueue(end)
+            if (stroke.points.isEmpty()) continue
+            for (band in bandRange(stroke, sf, ph)) sendStrokeFragment(stroke, band, sf, ph)
         }
+    }
+
+    /**
+     * Send the bands a live-drawn stroke touches EXCEPT its first band (which was already
+     * streamed incrementally). Fills in the page(s) below/above the one drawn on when a
+     * stroke straddles a page boundary.
+     */
+    fun streamStrokeExtraBands(stroke: Stroke) {
+        if (!isEnabled || stroke.points.isEmpty()) return
+        val sf = scaleFactor
+        val ph = pageHeightPt.toFloat()
+        if (ph <= 0f) return
+        val firstBand = floor(stroke.points.first().y * sf / ph).toInt().coerceAtLeast(0)
+        for (band in bandRange(stroke, sf, ph)) {
+            if (band != firstBand) sendStrokeFragment(stroke, band, sf, ph)
+        }
+    }
+
+    /** Contiguous range of page bands a stroke's y-extent spans. */
+    private fun bandRange(stroke: Stroke, sf: Float, pageHeight: Float): IntRange {
+        if (pageHeight <= 0f) return 0..0
+        var minY = Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (p in stroke.points) {
+            val y = p.y * sf
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+        val lo = floor(minY / pageHeight).toInt().coerceAtLeast(0)
+        val hi = floor(maxY / pageHeight).toInt().coerceAtLeast(0)
+        return lo..hi
+    }
+
+    /**
+     * Send the whole stroke to one page [band] with y shifted into that page's local frame.
+     * xournal's page clipbox clips it to the page, so the part on this page shows and the
+     * rest is off-page -- the same render-and-clip Notable's PDF pagination uses.
+     */
+    private fun sendStrokeFragment(stroke: Stroke, band: Int, sf: Float, pageHeight: Float) {
+        val group = uuidBytes(stroke.id) ?: return
+        val frag = fragUuid(group, band)
+        val yOffset = band * pageHeight
+        val pts = stroke.points
+
+        sendBegin(frag, group, band, penToTool(stroke.pen),
+            colorToRgba(stroke.pen, stroke.color), stroke.size * sf)
+
+        val maxP = stroke.maxPressure.toFloat().takeIf { it > 0f } ?: 4096f
+        var i = 0
+        while (i < pts.size) {
+            val n = minOf(POINTS_PER_DATAGRAM, pts.size - i)
+            val buf = header(MSG_POINTS, 16 + 2 + 2 + n * 12)
+            buf.put(frag)
+            buf.putShort(i.toShort())
+            buf.putShort(n.toShort())
+            for (j in i until i + n) {
+                val p = pts[j]
+                buf.putFloat(p.x * sf)
+                buf.putFloat(p.y * sf - yOffset)
+                buf.putFloat(((p.pressure ?: maxP) / maxP).coerceIn(0f, 1f))
+            }
+            enqueue(buf)
+            i += n
+        }
+
+        val end = header(MSG_STROKE_END, 16 + 2)
+        end.put(frag)
+        end.putShort(pts.size.coerceIn(0, 65535).toShort())
+        enqueue(end)
     }
 
     /**

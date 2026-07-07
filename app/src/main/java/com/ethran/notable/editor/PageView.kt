@@ -334,7 +334,10 @@ class PageView(
 
         saveStrokesToPersistLayer(strokesToAdd)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
-        if (!alreadyStreamed) inkStream.streamCompleteStrokes(strokesToAdd)
+        // Live-drawn strokes already streamed their first band incrementally; send any
+        // extra bands they straddle. Non-live adds (redo/paste) stream all bands.
+        if (alreadyStreamed) strokesToAdd.forEach { inkStream.streamStrokeExtraBands(it) }
+        else inkStream.streamCompleteStrokes(strokesToAdd)
 
 //        persistBitmapDebounced()
     }
