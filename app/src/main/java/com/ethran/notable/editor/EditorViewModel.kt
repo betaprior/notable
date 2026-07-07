@@ -643,7 +643,15 @@ class EditorViewModel @Inject constructor(
             // The View's LaunchedEffect will handle the full load once navigation syncs.
             Log.d("EditorView", "Page changed")
             val oldPage = currentPageId
-            _toolbarState.update { it.copy(pageId = newPageId) }
+            // Update the streamed page index now, not via the loadToolbarState
+            // round-trip (which the comment above notes isn't used for regular
+            // page switching) -- otherwise strokes on the new page stream with a
+            // stale index and land on the wrong xournal page.
+            val newIndex = bookId?.let {
+                appRepository.bookRepository.getById(it)?.getPageIndex(newPageId)
+            }?.takeIf { it >= 0 } ?: 0
+            _toolbarState.update { it.copy(pageId = newPageId, currentPageNumber = newIndex) }
+            inkStreamClient.setActivePage(newIndex)
             syncFromPageId(oldPage)
         } else {
             Log.d("EditorView", "Tried to change to same page!")
