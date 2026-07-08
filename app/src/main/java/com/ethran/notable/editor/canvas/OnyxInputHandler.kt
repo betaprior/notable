@@ -106,9 +106,20 @@ class OnyxInputHandler(
             // whole stroke is bound to the page of its first point (no splitting
             // across the boundary -- a known deferred corner case).
             val absY = absYPt(p1)
-            val vpage = if (pageHeightPt > 0)
-                floor(absY / pageHeightPt).toInt().coerceAtLeast(0) else 0
-            strokePageOffsetPt = vpage * pageHeightPt.toFloat()
+            val vpage: Int
+            if (page.isPaginated) {
+                // Paginated notebook: each Notable page IS one xournal page, and
+                // stroke y is already page-local (0..pageHeight). Use the page
+                // index directly and don't offset y.
+                vpage = page.currentPageNumber.coerceAtLeast(0)
+                strokePageOffsetPt = 0f
+            } else {
+                // Continuous/growable page: the tall page's y encodes the xournal
+                // page; map by y-band and subtract the band offset.
+                vpage = if (pageHeightPt > 0)
+                    floor(absY / pageHeightPt).toInt().coerceAtLeast(0) else 0
+                strokePageOffsetPt = vpage * pageHeightPt.toFloat()
+            }
             if (vpage != lastStreamedPage) {
                 inkStream.setActivePage(vpage) // create + scroll xournal to follow
                 lastStreamedPage = vpage

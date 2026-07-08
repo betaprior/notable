@@ -58,6 +58,11 @@ data class AppSettings(
     // Notable pages are continuous (growable), so show the page-boundary guide by default.
     val visualizePdfPagination: Boolean = true,
     val pageSize: PageSize = PageSize.Letter,
+    // Default for NEW notebooks: paginated ("snap") pages -- vertical scroll
+    // crosses fixed-height page boundaries like flipping pages (xoj-friendly).
+    // xoj imports are always paginated regardless. Existing notebooks are
+    // untouched. Off => legacy growable pages with swipe-only navigation.
+    val paginatedScrollByDefault: Boolean = true,
 
     // Gestures
     val doubleTapAction: GestureAction = GestureAction.Undo,

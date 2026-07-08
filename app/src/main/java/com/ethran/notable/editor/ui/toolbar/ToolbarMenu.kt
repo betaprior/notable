@@ -126,6 +126,10 @@ private fun ToolbarMenuContent(
             DividerCentered()
         }
 
+        MenuItem("Stream to laptop") {
+            onAction(ToolbarAction.StartStreaming)
+            onAction(ToolbarAction.ToggleMenu)
+        }
         MenuItem(if (uiState.streamingEnabled) "Live streaming: On" else "Live streaming: Off") {
             onAction(ToolbarAction.ToggleInkStream)
             onAction(ToolbarAction.ToggleMenu)

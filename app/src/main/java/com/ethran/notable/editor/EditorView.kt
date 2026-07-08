@@ -204,6 +204,12 @@ fun EditorView(
 
         val toolbarState by viewModel.toolbarState.collectAsStateWithLifecycle()
 
+        // Push the notebook's paginated ("snap") page height onto the PageView
+        // once known -- drives fixed-height rendering and the scroll boundary.
+        LaunchedEffect(toolbarState.fixedPageHeightPt) {
+            page.fixedPageHeightPt = toolbarState.fixedPageHeightPt
+        }
+
         // Observe pageId changes from ViewModel state for navigation
         LaunchedEffect(viewModel) {
             snapshotFlow { toolbarState.pageId }.filterNotNull().distinctUntilChanged()

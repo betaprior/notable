@@ -95,17 +95,24 @@ class XoppFile @Inject constructor(
     // -----------------------------------------------------------------------------------------
 
     /** Write as xopp (with pressure/variable-width data). */
-    suspend fun writeToXoppStream(target: ExportTarget, output: OutputStream) =
-        writeToStream(target, output, includePressure = true)
+    suspend fun writeToXoppStream(
+        target: ExportTarget, output: OutputStream,
+        strokeIdsOut: MutableList<String>? = null,
+    ) = writeToStream(target, output, includePressure = true, strokeIdsOut = strokeIdsOut)
 
     /** Write as xoj (classic xournal: single width per stroke, embedded images). */
-    suspend fun writeToXojStream(target: ExportTarget, output: OutputStream) =
-        writeToStream(target, output, includePressure = false)
+    suspend fun writeToXojStream(
+        target: ExportTarget, output: OutputStream,
+        strokeIdsOut: MutableList<String>? = null,
+    ) = writeToStream(target, output, includePressure = false, strokeIdsOut = strokeIdsOut)
 
     private suspend fun writeToStream(
         target: ExportTarget,
         output: OutputStream,
         includePressure: Boolean,
+        // collects the ids of the strokes actually written (SYNC_MARKER needs
+        // the exact exported set; sub-3-point strokes are skipped, see writePage)
+        strokeIdsOut: MutableList<String>? = null,
     ) = withContext(Dispatchers.IO) {
             val tmp = File(
                 context.cacheDir, when (target) {
@@ -128,12 +135,12 @@ class XoppFile @Inject constructor(
                             val book = bookRepo.getById(target.bookId)
                                 ?: throw IOException("Book not found: ${target.bookId}")
                             book.pageIds.forEach { pageId ->
-                                writePage(pageId, writer, includePressure)
+                                writePage(pageId, writer, includePressure, strokeIdsOut)
                             }
                         }
 
                         is ExportTarget.Page -> {
-                            writePage(target.pageId, writer, includePressure)
+                            writePage(target.pageId, writer, includePressure, strokeIdsOut)
                         }
                     }
                     writer.write("</xournal>\n")
@@ -149,8 +156,10 @@ class XoppFile @Inject constructor(
             }
         }
 
-    private suspend fun writePage(pageId: String, writer: BufferedWriter, includePressure: Boolean) =
-        withContext(Dispatchers.IO) {
+    private suspend fun writePage(
+        pageId: String, writer: BufferedWriter, includePressure: Boolean,
+        strokeIdsOut: MutableList<String>? = null,
+    ) = withContext(Dispatchers.IO) {
             val pageWithData = pageRepo.getWithDataById(pageId) ?: return@withContext
             val strokes = pageWithData.strokes
             val images = pageWithData.images
@@ -212,6 +221,7 @@ class XoppFile @Inject constructor(
                     firstPoint = false
                 }
                 writer.write("</stroke>\n")
+                strokeIdsOut?.add(stroke.id)
             }
 
             for (image in images) {
@@ -369,6 +379,11 @@ class XoppFile @Inject constructor(
         onPageCreated: suspend (Page) -> Unit,
         onStrokeBatch: suspend (List<Stroke>) -> Unit,
         onPageFinalized: suspend (pageId: String, images: List<Image>) -> Unit,
+        // background applied to pages whose file specifies no (or a plain)
+        // ruling; null keeps Notable's blank default.
+        blankDefaultBackground: String? = null,
+        // invoked with the first page's declared height in points (for paginated import)
+        onFirstPageHeightPt: ((Int) -> Unit)? = null,
     ) = withContext(Dispatchers.IO) {
         log.v("Importing book from $uri")
         ensureNotMainThread("xoppImportBook")
@@ -386,6 +401,12 @@ class XoppFile @Inject constructor(
                     var pageCount = 0
                     while (eventType != XmlPullParser.END_DOCUMENT) {
                         if (eventType == XmlPullParser.START_TAG && parser.name == "page") {
+                            // Capture the first page's declared height (points) so a
+                            // paginated import can fix its pages to the source page size.
+                            if (pageCount == 0) {
+                                parser.getAttributeValue(null, "height")?.toFloatOrNull()
+                                    ?.let { onFirstPageHeightPt?.invoke(it.toInt()) }
+                            }
                             // <background> is always the first child of <page> in xournal
                             // files; read its style before creating the page so ruled/grid
                             // pages import with the matching native background.
@@ -397,7 +418,10 @@ class XoppFile @Inject constructor(
                                     parser.getAttributeValue(null, "style")
                                 )
                             }
-                            val page = if (bg != null) Page(background = bg) else Page()
+                            // File ruling wins; fall back to the caller's default
+                            // (e.g. xournalLined for .xoj) only when none was set.
+                            val chosenBg = bg ?: blankDefaultBackground
+                            val page = if (chosenBg != null) Page(background = chosenBg) else Page()
                             onPageCreated(page)
                             val images = parsePageContentStreaming(
                                 parser, page, parseState, onStrokeBatch

@@ -1,5 +1,6 @@
 package com.ethran.notable.ui.views
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.ethran.notable.dropbox.DropboxManifest
 import com.ethran.notable.dropbox.DropboxSyncManager
 import com.ethran.notable.dropbox.DropboxSyncState
@@ -57,6 +59,8 @@ fun DropboxSettingsTab() {
     var manifestEntries by remember { mutableStateOf<List<DropboxManifest.ManifestEntry>>(emptyList()) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var authCode by remember { mutableStateOf("") }
+    var scanFolder by remember { mutableStateOf("/notes-sync") }
+    var detailEntry by remember { mutableStateOf<DropboxManifest.ManifestEntry?>(null) }
 
     LaunchedEffect(Unit) {
         syncManager.initializeState()
@@ -146,10 +150,11 @@ fun DropboxSettingsTab() {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Text(
-                text = "Filelist: Dropbox:${syncManager.filelistDropboxPath}",
-                style = MaterialTheme.typography.caption,
-                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+            EInkTextField(
+                label = "Scan folder (Dropbox path)",
+                value = scanFolder,
+                onValueChange = { scanFolder = it },
+                placeholder = "/notes-sync"
             )
         }
 
@@ -161,19 +166,19 @@ fun DropboxSettingsTab() {
             icon = Icons.Default.List
         ) {
             EInkActionButton(
-                text = "Re-scan filelist.txt",
+                text = "Scan Dropbox folder",
                 onClick = {
                     scope.launch {
-                        val result = syncManager.rescanFileList()
+                        val result = syncManager.scanFolder(scanFolder.trim().ifBlank { "/" })
                         when (result) {
                             is AppResult.Success -> {
-                                statusMessage = "Rescanned: ${result.data} new entries"
+                                statusMessage = "Catalogued ${result.data} file(s)"
                                 withContext(Dispatchers.IO) {
                                     manifestEntries = syncManager.getManifestEntries()
                                 }
                             }
                             is AppResult.Error -> {
-                                statusMessage = "Rescan failed: ${result.error.userMessage}"
+                                statusMessage = "Scan failed: ${result.error.userMessage}"
                             }
                         }
                     }
@@ -186,7 +191,7 @@ fun DropboxSettingsTab() {
 
             if (manifestEntries.isEmpty()) {
                 Text(
-                    text = "No files in manifest. Add Dropbox paths to filelist.txt and re-scan.",
+                    text = "No files catalogued. Set a scan folder above and Scan Dropbox folder.",
                     style = MaterialTheme.typography.body2,
                     color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f)
                 )
@@ -195,30 +200,34 @@ fun DropboxSettingsTab() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        // Tap the entry to open a large-text details modal -- the
+                        // inline path is small and unreadable on e-ink.
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { detailEntry = entry }
+                        ) {
                             Text(
                                 text = entry.title,
-                                style = MaterialTheme.typography.body2,
                                 fontWeight = FontWeight.Bold,
+                                fontSize = 20.sp,
                                 color = MaterialTheme.colors.onSurface
                             )
+                            // filename + format, readable; full path is in the modal
                             Text(
-                                text = "${entry.dropboxPath} [${entry.format}]",
-                                style = MaterialTheme.typography.caption,
-                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.5f),
-                                fontSize = 10.sp
+                                text = "${entry.dropboxPath.substringAfterLast('/')} · ${entry.format}" +
+                                    if (entry.lastSyncedRev.isNotBlank()) " · imported" else "",
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
                             )
-                            if (entry.lastSyncedRev.isNotBlank()) {
-                                Text(
-                                    text = "rev: ${entry.lastSyncedRev.take(8)}...",
-                                    style = MaterialTheme.typography.caption,
-                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.4f),
-                                    fontSize = 9.sp
-                                )
-                            }
+                            Text(
+                                text = "tap for details",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colors.onSurface.copy(alpha = 0.45f)
+                            )
                         }
 
                         if (syncState is DropboxSyncState.Connected) {
@@ -264,7 +273,7 @@ fun DropboxSettingsTab() {
                             var successCount = 0
                             var failCount = 0
                             for (entry in imported) {
-                                val result = syncManager.uploadNotebook(entry)
+                                val result = syncManager.uploadByPath(entry.dropboxPath)
                                 when (result) {
                                     is AppResult.Success -> successCount++
                                     is AppResult.Error -> failCount++
@@ -295,6 +304,65 @@ fun DropboxSettingsTab() {
         }
 
         Spacer(modifier = Modifier.height(32.dp))
+    }
+
+    // Large-text details modal for a managed file (readable on e-ink).
+    detailEntry?.let { entry ->
+        Dialog(onDismissRequest = { detailEntry = null }) {
+            androidx.compose.material.Surface(
+                color = MaterialTheme.colors.surface,
+                border = androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colors.onSurface),
+            ) {
+                Column(modifier = Modifier.padding(24.dp)) {
+                    Text(entry.title, fontWeight = FontWeight.Bold, fontSize = 24.sp,
+                        color = MaterialTheme.colors.onSurface)
+                    Spacer(Modifier.height(16.dp))
+                    DetailRow("Dropbox path", entry.dropboxPath)
+                    DetailRow("Format", entry.format)
+                    DetailRow("Imported rev",
+                        entry.lastSyncedRev.ifBlank { "not imported yet" })
+                    Spacer(Modifier.height(20.dp))
+                    EInkActionButton(
+                        text = "Remove from list",
+                        onClick = {
+                            val path = entry.dropboxPath
+                            detailEntry = null
+                            scope.launch {
+                                syncManager.removeFromCatalog(path)
+                                withContext(Dispatchers.IO) {
+                                    manifestEntries = syncManager.getManifestEntries()
+                                }
+                                statusMessage = "Removed $path from the catalog"
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        isSecondary = true,
+                    )
+                    Text(
+                        text = "Only removes it from this list — the Dropbox file and any imported notebook are untouched.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.55f),
+                        modifier = Modifier.padding(top = 6.dp, bottom = 12.dp)
+                    )
+                    EInkActionButton(
+                        text = "Close",
+                        onClick = { detailEntry = null },
+                        modifier = Modifier.fillMaxWidth(),
+                        isBold = true,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Column(modifier = Modifier.padding(bottom = 14.dp)) {
+        Text(label, fontSize = 14.sp,
+            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f))
+        Text(value, fontSize = 19.sp, fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colors.onSurface)
     }
 }
 

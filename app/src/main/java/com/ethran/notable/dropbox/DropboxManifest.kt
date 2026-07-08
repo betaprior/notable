@@ -107,6 +107,41 @@ object DropboxManifest {
     }
 
     /**
+     * Add a Dropbox file to the catalog if not already present, leaving its rev
+     * blank (nothing has been imported/synced yet). Existing entries -- imported
+     * or previously catalogued -- are kept untouched so their rev survives.
+     */
+    fun upsertCatalog(manifest: Manifest, dropboxPath: String, format: String): Manifest {
+        if (findByPath(manifest, dropboxPath) != null) return manifest
+        val entry = ManifestEntry(
+            dropboxPath = dropboxPath,
+            format = format,
+            notebookId = "",
+            title = dropboxPath.substringAfterLast('/').removeSuffix(".$format"),
+        )
+        return manifest.copy(files = manifest.files + entry)
+    }
+
+    /**
+     * Upsert a path's rev in the manifest-as-rev-cache: update the entry if the
+     * path exists, otherwise add one. notebookId is left blank -- identity lives
+     * on the notebook (linkedExternalUri), not here.
+     */
+    fun upsertRev(manifest: Manifest, dropboxPath: String, format: String, rev: String): Manifest {
+        if (findByPath(manifest, dropboxPath) != null) {
+            return updateRev(manifest, dropboxPath, rev)
+        }
+        val entry = ManifestEntry(
+            dropboxPath = dropboxPath,
+            format = format,
+            notebookId = "",
+            title = dropboxPath.substringAfterLast('/'),
+            lastSyncedRev = rev,
+        )
+        return manifest.copy(files = manifest.files + entry)
+    }
+
+    /**
      * Update the notebookId for a specific entry (link manifest to actual Notable notebook).
      */
     fun updateNotebookId(manifest: Manifest, dropboxPath: String, notebookId: String): Manifest {
@@ -129,6 +164,11 @@ object DropboxManifest {
      */
     fun findByPath(manifest: Manifest, path: String): ManifestEntry? {
         return manifest.files.find { it.dropboxPath == path }
+    }
+
+    /** Drop a path from the catalog. Does not touch Dropbox or any notebook. */
+    fun removeByPath(manifest: Manifest, path: String): Manifest {
+        return manifest.copy(files = manifest.files.filterNot { it.dropboxPath == path })
     }
 
     private fun inferFormat(path: String): String {

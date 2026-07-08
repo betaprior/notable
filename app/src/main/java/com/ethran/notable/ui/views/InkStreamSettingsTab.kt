@@ -35,6 +35,8 @@ fun InkStreamSettingsTab() {
 
     var host by remember { mutableStateOf("") }
     var port by remember { mutableStateOf("5555") }
+    var hubPort by remember { mutableStateOf("5550") }
+    var secret by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
@@ -43,6 +45,8 @@ fun InkStreamSettingsTab() {
     LaunchedEffect(settings) {
         host = settings.host
         port = settings.port.toString()
+        hubPort = settings.hubPort.toString()
+        secret = settings.secret
     }
 
     fun persist(enabled: Boolean) {
@@ -51,8 +55,17 @@ fun InkStreamSettingsTab() {
             statusMessage = "Invalid port"
             return
         }
+        val hubPortNum = hubPort.toIntOrNull()
+        if (hubPortNum == null || hubPortNum !in 1..65535) {
+            statusMessage = "Invalid hub port"
+            return
+        }
+        // copy() so hub-managed fields (sessionToken) survive manual edits
         client.saveSettings(
-            InkStreamSettings(enabled = enabled, host = host.trim(), port = portNum)
+            settings.copy(
+                enabled = enabled, host = host.trim(),
+                port = portNum, hubPort = hubPortNum, secret = secret.trim()
+            )
         )
         statusMessage = if (enabled)
             "Streaming to ${host.trim()}:$portNum" else "Streaming disabled"
@@ -110,10 +123,28 @@ fun InkStreamSettingsTab() {
             Spacer(modifier = Modifier.height(8.dp))
 
             EInkTextField(
-                label = "Receiver UDP port",
+                label = "Receiver UDP port (set automatically by Stream to laptop)",
                 value = port,
                 onValueChange = { port = it.filter { c -> c.isDigit() } },
                 placeholder = "5555"
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            EInkTextField(
+                label = "Hub TCP port (inkhubd on the laptop)",
+                value = hubPort,
+                onValueChange = { hubPort = it.filter { c -> c.isDigit() } },
+                placeholder = "5550"
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            EInkTextField(
+                label = "Hub secret (matches the hub config; optional)",
+                value = secret,
+                onValueChange = { secret = it },
+                placeholder = ""
             )
 
             Spacer(modifier = Modifier.height(12.dp))

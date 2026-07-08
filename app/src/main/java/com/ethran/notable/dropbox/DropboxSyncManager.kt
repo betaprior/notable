@@ -13,6 +13,7 @@ import com.ethran.notable.utils.onFailure
 import dagger.hilt.android.qualifiers.ApplicationContext
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +28,9 @@ class DropboxSyncManager @Inject constructor(
     private val kvProxy: KvProxy,
     private val importEngine: ImportEngine,
     private val xoppFile: XoppFile,
+    private val inkStreamClient: com.ethran.notable.ink.InkStreamClient,
+    private val bookRepo: com.ethran.notable.data.db.BookRepository,
+    @param:com.ethran.notable.di.ApplicationScope private val appScope: kotlinx.coroutines.CoroutineScope,
 ) {
     private val TAG = "DropboxSyncManager"
 
@@ -48,6 +52,15 @@ class DropboxSyncManager @Inject constructor(
 
     // filelist.txt lives on Dropbox at /notes-sync/filelist.txt
     val filelistDropboxPath: String = "/notes-sync/filelist.txt"
+
+    // Auto-linked notebooks (created by "start streaming") get paths here
+    val autoLinkFolder: String = "/notes-sync"
+
+    init {
+        // one-time bridge from the old manifest-notebookId links to the
+        // notebook-carried linkedExternalUri identity
+        appScope.launch { migrateLegacyLinks() }
+    }
 
     /**
      * Start the OAuth2 PKCE authorization flow.
@@ -156,10 +169,54 @@ class DropboxSyncManager @Inject constructor(
     }
 
     /**
+     * Catalog the Dropbox folder [root] (recursively): find every .xoj/.xopp
+     * and upsert it into the manifest (path + format + rev). This is the
+     * list_folder replacement for filelist.txt -- the catalog is "what's
+     * actually in Dropbox", and each file's rev seeds the rev cache.
+     * @return number of files catalogued.
+     */
+    suspend fun scanFolder(root: String): AppResult<Int, DomainError> = withContext(Dispatchers.IO) {
+        val settings = getSettings()
+        if (!settings.enabled || settings.accessToken.isBlank()) {
+            return@withContext AppResult.Error(DomainError.SyncAuthError)
+        }
+        val client = createClient(settings)
+        when (val res = client.listFolder(root, recursive = true)) {
+            is AppResult.Error -> AppResult.Error(res.error)
+            is AppResult.Success -> {
+                val notes = res.data.filter {
+                    it.path_display.endsWith(".xoj", true) || it.path_display.endsWith(".xopp", true)
+                }
+                var manifest = DropboxManifest.readManifest(manifestPath)
+                for (f in notes) {
+                    val format = if (f.path_display.endsWith(".xopp", true)) "xopp" else "xoj"
+                    manifest = DropboxManifest.upsertCatalog(manifest, f.path_display, format)
+                }
+                DropboxManifest.writeManifest(manifestPath, manifest)
+                Log.i(TAG, "Scanned $root: ${notes.size} note files catalogued")
+                AppResult.Success(notes.size)
+            }
+        }
+    }
+
+    /**
      * Get the current manifest entries.
      */
     fun getManifestEntries(): List<DropboxManifest.ManifestEntry> {
         return DropboxManifest.readManifest(manifestPath).files
+    }
+
+    /**
+     * Remove a path from the local catalog (manifest). Does NOT delete the
+     * Dropbox file or any imported notebook -- it only stops listing the path.
+     * A later folder scan will re-add it if it still exists in Dropbox.
+     */
+    suspend fun removeFromCatalog(path: String) = withContext(Dispatchers.IO) {
+        DropboxManifest.writeManifest(
+            manifestPath,
+            DropboxManifest.removeByPath(DropboxManifest.readManifest(manifestPath), path)
+        )
+        Log.i(TAG, "Removed from catalog: $path")
     }
 
     /**
@@ -172,15 +229,23 @@ class DropboxSyncManager @Inject constructor(
                 return@withContext AppResult.Error(DomainError.SyncAuthError)
             }
 
-            // Check if already imported (has a rev from a previous successful import)
-            if (!force && entry.lastSyncedRev.isNotBlank()) {
-                restoreConnectedState()
-                return@withContext AppResult.Error(
-                    DomainError.SyncError("'${entry.title}' already imported. Use force to re-import.")
-                )
+            // Identity is the Dropbox path: if a notebook is already linked to
+            // it, this path was imported before. Re-import (force) replaces it
+            // in place (delete cascades pages/strokes) instead of duplicating.
+            val linkUri = DropboxLink.uriFor(entry.dropboxPath)
+            val existing = bookRepo.getByLinkedUri(linkUri)
+            if (existing != null) {
+                if (!force) {
+                    restoreConnectedState()
+                    return@withContext AppResult.Error(
+                        DomainError.SyncError("'${entry.title}' already imported. Use force to re-import.")
+                    )
+                }
+                Log.i(TAG, "Re-importing $linkUri: replacing notebook ${existing.id}")
+                bookRepo.delete(existing.id)
             }
 
-            Log.i(TAG,"Starting download: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId})")
+            Log.i(TAG,"Starting download: ${entry.dropboxPath} (format=${entry.format})")
             _state.value = DropboxSyncState.Syncing("Downloading ${entry.title}...")
 
             val client = createClient(settings)
@@ -191,7 +256,7 @@ class DropboxSyncManager @Inject constructor(
 
                     // Write to a temp file for import
                     val ext = if (entry.format == "xoj") "xoj" else "xopp"
-                    val tempFile = File(context.cacheDir, "dropbox_import_${entry.notebookId}.$ext")
+                    val tempFile = File(context.cacheDir, "dropbox_import_${entry.dropboxPath.hashCode()}.$ext")
                     tempFile.writeBytes(bytes)
 
                     try {
@@ -203,16 +268,23 @@ class DropboxSyncManager @Inject constructor(
                             )
                         )
 
-                        // Always update manifest with notebook ID if a book was created,
-                        // even if import had partial errors (e.g. some pages failed)
-                        var manifest = DropboxManifest.readManifest(manifestPath)
+                        // Stamp the Dropbox path onto the created notebook (its
+                        // identity), and cache the rev by path. Done even on
+                        // partial import errors so the (created) book is linked.
                         val actualBookId = importEngine.lastImportedBookId
                         if (actualBookId != null) {
-                            manifest = DropboxManifest.updateNotebookId(manifest, entry.dropboxPath, actualBookId)
+                            bookRepo.update(
+                                bookRepo.getById(actualBookId)!!.copy(linkedExternalUri = linkUri)
+                            )
                             Log.i(TAG, "Linked ${entry.dropboxPath} -> notebook $actualBookId")
                         }
-                        manifest = DropboxManifest.updateRev(manifest, entry.dropboxPath, rev)
-                        DropboxManifest.writeManifest(manifestPath, manifest)
+                        DropboxManifest.writeManifest(
+                            manifestPath,
+                            DropboxManifest.upsertRev(
+                                DropboxManifest.readManifest(manifestPath),
+                                entry.dropboxPath, entry.format, rev
+                            )
+                        )
 
                         when (importResult) {
                             is AppResult.Success -> {
@@ -238,77 +310,152 @@ class DropboxSyncManager @Inject constructor(
         }
 
     /**
-     * Upload a notebook to Dropbox by notebook ID (used from toolbar).
+     * The Dropbox path a notebook is linked to (from its linkedExternalUri
+     * "dropbox://<path>" identity), or null if it isn't Dropbox-linked.
+     */
+    suspend fun linkedPath(notebookId: String): String? =
+        DropboxLink.pathOf(bookRepo.getById(notebookId)?.linkedExternalUri)
+
+    /**
+     * Bridge legacy links (manifest notebookId -> path, from before identity
+     * moved onto the notebook) into linkedExternalUri. Only migrates entries
+     * that were genuinely synced (non-blank rev), so failed-upload orphans
+     * don't link a notebook to a phantom remote file. Idempotent: skips any
+     * notebook that already has a linkedExternalUri.
+     */
+    suspend fun migrateLegacyLinks() = withContext(Dispatchers.IO) {
+        val manifest = DropboxManifest.readManifest(manifestPath)
+        for (entry in manifest.files) {
+            if (entry.notebookId.isBlank() || entry.lastSyncedRev.isBlank()) continue
+            val nb = bookRepo.getById(entry.notebookId) ?: continue
+            if (nb.linkedExternalUri != null) continue
+            bookRepo.update(nb.copy(linkedExternalUri = DropboxLink.uriFor(entry.dropboxPath)))
+            Log.i(TAG, "Migrated legacy link: ${entry.notebookId} -> ${entry.dropboxPath}")
+        }
+    }
+
+    suspend fun isDropboxLinked(notebookId: String): Boolean = linkedPath(notebookId) != null
+
+    /**
+     * Upload a notebook to Dropbox using the path stored on the notebook.
+     * Fails if the notebook isn't Dropbox-linked (see [linkAndUpload]).
      */
     suspend fun uploadNotebook(notebookId: String): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
-        val manifest = DropboxManifest.readManifest(manifestPath)
-        val entry = DropboxManifest.findByNotebookId(manifest, notebookId)
+        val path = linkedPath(notebookId)
             ?: return@withContext AppResult.Error(
-                DomainError.SyncError("Notebook $notebookId not found in Dropbox manifest")
+                DomainError.SyncError("Notebook is not linked to a Dropbox file")
             )
-        uploadNotebook(entry)
+        doUpload(notebookId, path, formatForPath(path))
+    }
+
+    /** Upload the notebook currently linked to [path] (used by the settings catalog). */
+    suspend fun uploadByPath(path: String): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
+        val notebook = bookRepo.getByLinkedUri(DropboxLink.uriFor(path))
+            ?: return@withContext AppResult.Error(
+                DomainError.SyncError("No local notebook linked to $path")
+            )
+        doUpload(notebook.id, path, formatForPath(path))
     }
 
     /**
-     * Upload a notebook to Dropbox by manifest entry (used from settings UI).
+     * Assign a Dropbox path for a not-yet-linked notebook, upload it, and only
+     * on success stamp the link (linkedExternalUri + manifest rev). A failed
+     * upload leaves the notebook unlinked so the next attempt retries cleanly
+     * -- no orphaned link, no phantom remote file.
      */
-    suspend fun uploadNotebook(entry: DropboxManifest.ManifestEntry): AppResult<Unit, DomainError> = withContext(Dispatchers.IO) {
-        val settings = getSettings()
-        if (!settings.enabled || settings.accessToken.isBlank()) {
-            return@withContext AppResult.Error(DomainError.SyncAuthError)
+    suspend fun linkAndUpload(notebookId: String, title: String): AppResult<String, DomainError> =
+        withContext(Dispatchers.IO) {
+            val path = assignPath(title)
+            when (val r = doUpload(notebookId, path, "xoj")) {
+                is AppResult.Success -> {
+                    bookRepo.update(
+                        bookRepo.getById(notebookId)!!.copy(
+                            linkedExternalUri = DropboxLink.uriFor(path)
+                        )
+                    )
+                    Log.i(TAG, "Linked notebook $notebookId -> $path (after successful upload)")
+                    AppResult.Success(path)
+                }
+                is AppResult.Error -> AppResult.Error(r.error)
+            }
         }
 
-        Log.i(TAG,"Starting upload: ${entry.dropboxPath} (format=${entry.format}, notebookId=${entry.notebookId}, lastRev=${entry.lastSyncedRev})")
-        _state.value = DropboxSyncState.Syncing("Uploading ${entry.title}...")
+    /** Pick a fresh Dropbox path under [autoLinkFolder] from [title]. */
+    private fun assignPath(title: String): String {
+        val manifest = DropboxManifest.readManifest(manifestPath)
+        val base = title.lowercase()
+            .removeSuffix(".xoj").removeSuffix(".xopp")
+            .replace(Regex("[^a-z0-9]+"), "-").trim('-')
+            .ifBlank { "untitled" }
+        var path = "$autoLinkFolder/$base.xoj"
+        var n = 2
+        while (DropboxManifest.findByPath(manifest, path) != null) {
+            path = "$autoLinkFolder/$base-$n.xoj"
+            n++
+        }
+        return path
+    }
 
+    private fun formatForPath(path: String): String =
+        if (path.endsWith(".xopp", ignoreCase = true)) "xopp" else "xoj"
+
+    /**
+     * Core upload: export [notebookId], push to [path], update the rev cache,
+     * and fire a SYNC_MARKER so a streaming receiver knows those strokes are
+     * committed. Does not touch linkedExternalUri (callers own linkage).
+     */
+    private suspend fun doUpload(notebookId: String, path: String, format: String): AppResult<Unit, DomainError> {
+        val settings = getSettings()
+        if (!settings.enabled || settings.accessToken.isBlank()) {
+            return AppResult.Error(DomainError.SyncAuthError)
+        }
+
+        _state.value = DropboxSyncState.Syncing("Uploading ${path.substringAfterLast('/')}...")
         val client = createClient(settings)
 
-        // Check for conflicts via rev
-        if (entry.lastSyncedRev.isNotBlank()) {
-            Log.i(TAG,"Checking rev for ${entry.dropboxPath}: local=${entry.lastSyncedRev}")
-            when (val metaResult = client.getMetadata(entry.dropboxPath)) {
+        // Conflict check against the cached rev for this path
+        val knownRev = DropboxManifest.findByPath(DropboxManifest.readManifest(manifestPath), path)
+            ?.lastSyncedRev.orEmpty()
+        if (knownRev.isNotBlank()) {
+            when (val metaResult = client.getMetadata(path)) {
                 is AppResult.Success -> {
-                    val remoteRev = metaResult.data.rev
-                    Log.i(TAG,"Remote rev=$remoteRev, local rev=${entry.lastSyncedRev}")
-                    if (remoteRev != entry.lastSyncedRev) {
-                        val msg = "Conflict on ${entry.title}: local rev=${entry.lastSyncedRev}, remote rev=$remoteRev"
-                        Log.w(TAG,msg)
+                    if (metaResult.data.rev != knownRev) {
+                        val msg = "Conflict on $path: local rev=$knownRev, remote rev=${metaResult.data.rev}"
+                        Log.w(TAG, msg)
                         _state.value = DropboxSyncState.Error(msg)
-                        return@withContext AppResult.Error(
-                            DomainError.SyncConflict
-                        )
+                        return AppResult.Error(DomainError.SyncConflict)
                     }
                 }
                 is AppResult.Error -> {
-                    Log.i(TAG,"get_metadata for ${entry.dropboxPath}: ${metaResult.error.userMessage}")
                     if (metaResult.error !is DomainError.NotFound) {
                         _state.value = DropboxSyncState.Error(metaResult.error.userMessage)
-                        return@withContext AppResult.Error(metaResult.error)
+                        return AppResult.Error(metaResult.error)
                     }
                 }
             }
-        } else {
-            Log.i(TAG,"No lastSyncedRev for ${entry.dropboxPath}, skipping conflict check")
         }
 
-        // Export to bytes, using format-aware writer
-        try {
-            val exportTarget = com.ethran.notable.io.ExportTarget.Book(entry.notebookId)
+        return try {
+            val exportTarget = com.ethran.notable.io.ExportTarget.Book(notebookId)
             val baos = java.io.ByteArrayOutputStream()
-            if (entry.format == "xoj") xoppFile.writeToXojStream(exportTarget, baos)
-            else xoppFile.writeToXoppStream(exportTarget, baos)
+            val exportedStrokeIds = mutableListOf<String>()
+            if (format == "xoj") xoppFile.writeToXojStream(exportTarget, baos, exportedStrokeIds)
+            else xoppFile.writeToXoppStream(exportTarget, baos, exportedStrokeIds)
             val bytes = baos.toByteArray()
 
-            when (val uploadResult = client.upload(entry.dropboxPath, bytes)) {
+            when (val uploadResult = client.upload(path, bytes)) {
                 is AppResult.Success -> {
                     val newRev = uploadResult.data
-                    val updated = DropboxManifest.updateRev(
-                        DropboxManifest.readManifest(manifestPath), entry.dropboxPath, newRev
+                    DropboxManifest.writeManifest(
+                        manifestPath,
+                        DropboxManifest.upsertRev(
+                            DropboxManifest.readManifest(manifestPath), path, format, newRev
+                        )
                     )
-                    DropboxManifest.writeManifest(manifestPath, updated)
-
+                    val sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                    inkStreamClient.syncMarker(sha, exportedStrokeIds)
                     restoreConnectedState()
-                    Log.i(TAG,"Uploaded ${entry.title} (rev=$newRev)")
+                    Log.i(TAG, "Uploaded $path (rev=$newRev)")
                     AppResult.Success(Unit)
                 }
                 is AppResult.Error -> {
@@ -321,14 +468,6 @@ class DropboxSyncManager @Inject constructor(
             _state.value = DropboxSyncState.Error(error.userMessage)
             AppResult.Error(error)
         }
-    }
-
-    /**
-     * Check if a notebook is linked to Dropbox (has an entry in the manifest).
-     */
-    fun isDropboxLinked(notebookId: String): Boolean {
-        val manifest = DropboxManifest.readManifest(manifestPath)
-        return DropboxManifest.findByNotebookId(manifest, notebookId) != null
     }
 
     suspend fun getSettings(): DropboxSettings {
@@ -345,8 +484,16 @@ class DropboxSyncManager @Inject constructor(
             accessToken = settings.accessToken,
             refreshToken = settings.refreshToken,
             onTokenRefreshed = { newToken ->
-                // We can't easily update KvProxy from here (non-suspend),
-                // so we store it transiently. It'll be refreshed again next time.
+                // Persist the refreshed access token so later operations don't
+                // each have to re-refresh. Re-read settings first so we don't
+                // clobber a concurrent change.
+                appScope.launch {
+                    val current = getSettings()
+                    if (current.refreshToken == settings.refreshToken &&
+                        current.accessToken != newToken) {
+                        saveSettings(current.copy(accessToken = newToken))
+                    }
+                }
             }
         )
     }

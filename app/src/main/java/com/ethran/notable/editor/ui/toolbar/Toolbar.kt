@@ -36,6 +36,8 @@ import com.ethran.notable.editor.utils.PenSetting
 import com.ethran.notable.ui.dialogs.BackgroundSelector
 import com.ethran.notable.ui.noRippleClickable
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.ChevronLeft
+import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Clipboard
 import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.RefreshCcw
@@ -338,6 +340,22 @@ fun ToolbarContent(
                         contentDescription = "zoom 200%",
                         onSelect = { onAction(ToolbarAction.SetZoom(2.0f)) }
                     )
+
+                    // Page navigation (same as swipe; handy when zoomed in, where
+                    // horizontal swipe pans instead of turning pages).
+                    if (uiState.notebookId != null) {
+                        VerticalDivider()
+                        ToolbarButton(
+                            vectorIcon = FeatherIcons.ChevronLeft,
+                            contentDescription = "previous page",
+                            onSelect = { onAction(ToolbarAction.PreviousPage) }
+                        )
+                        ToolbarButton(
+                            vectorIcon = FeatherIcons.ChevronRight,
+                            contentDescription = "next page",
+                            onSelect = { onAction(ToolbarAction.NextPage) }
+                        )
+                    }
                     VerticalDivider()
                 } // end left scrollable Row
 

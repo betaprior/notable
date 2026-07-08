@@ -41,12 +41,18 @@ private const val TWO_FINGER_MIN_SEPARATION = 120f
 private const val TWO_FINGER_MAX_SEPARATION = 850f
 
 
+// Min one-finger horizontal drag (px) before it pans instead of turning a page,
+// while zoomed in. Smaller than SWIPE_THRESHOLD so panning feels responsive.
+private const val ZOOM_PAN_THRESHOLD = 40f
+
 @Composable
 fun EditorGestureReceiver(
     controlTower: EditorControlTower,
 ) {
     val coroutineScope = rememberCoroutineScope()
     val appSettings = GlobalAppSettings.current
+    // True when the page is zoomed past 1x (there's off-screen content to pan to).
+    fun zoomedIn(): Boolean = abs(controlTower.page.zoomLevel.value - 1f) > 0.01f
     var crossPosition by remember { mutableStateOf<IntOffset?>(null) }
     var rectangleBounds by remember { mutableStateOf<Rect?>(null) }
     val view = LocalView.current
@@ -134,11 +140,23 @@ fun EditorGestureReceiver(
                                 gestureState.checkContinuousZoom()
                                 if (gestureState.checkHoldingTwoFingers())
                                     controlTower.showHint("Drag mode!")
-
+                                // When zoomed in, a one-finger HORIZONTAL drag pans
+                                // instead of turning the page (there's off-screen
+                                // content to reach). checkSmoothScrolling only enters
+                                // Scroll on vertical drags, so add the horizontal case.
+                                if (zoomedIn() && gestureState.gestureMode == GestureMode.Normal &&
+                                    gestureState.isOneFinger() &&
+                                    abs(gestureState.getHorizontalDrag()) > ZOOM_PAN_THRESHOLD
+                                ) {
+                                    gestureState.gestureMode = GestureMode.Scroll
+                                }
                             }
                             if (gestureState.gestureMode == GestureMode.Scroll) {
-                                val delta = gestureState.getVerticalDragDelta()
-                                controlTower.requestScroll(Offset(0f, delta.toFloat()))
+                                // Pan in 2D when zoomed (reach off-screen content);
+                                // vertical-only at 1x so horizontal flicks still page.
+                                val delta = if (zoomedIn()) gestureState.getTotalDragDelta()
+                                else Offset(0f, gestureState.getVerticalDragDelta().toFloat())
+                                controlTower.requestScroll(delta)
                             }
                             if (gestureState.gestureMode == GestureMode.Zoom) {
                                 val delta = gestureState.getPinchDelta()

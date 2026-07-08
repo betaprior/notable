@@ -57,7 +57,8 @@ class DropboxClient(
                 } else {
                     val errBody = response.body.string()
                     Log.e(TAG,"Upload failed: ${response.code} $errBody")
-                    AppResult.Error(DomainError.SyncError("Upload failed (${response.code}): $errBody"))
+                    authErrorOr(response.code, errBody,
+                        DomainError.SyncError("Upload failed (${response.code}): $errBody"))
                 }
             }
         }
@@ -90,7 +91,8 @@ class DropboxClient(
                     if (response.code == 409 && body.contains("not_found")) {
                         AppResult.Error(DomainError.NotFound("File not found: $path"))
                     } else {
-                        AppResult.Error(DomainError.SyncError("Download failed (${response.code}): $body"))
+                        authErrorOr(response.code, body,
+                            DomainError.SyncError("Download failed (${response.code}): $body"))
                     }
                 }
             }
@@ -120,7 +122,8 @@ class DropboxClient(
                     if (response.code == 409 && body.contains("not_found")) {
                         AppResult.Error(DomainError.NotFound("File not found: $path"))
                     } else {
-                        AppResult.Error(DomainError.SyncError("get_metadata failed (${response.code}): $body"))
+                        authErrorOr(response.code, body,
+                            DomainError.SyncError("get_metadata failed (${response.code}): $body"))
                     }
                 }
             }
@@ -128,30 +131,50 @@ class DropboxClient(
     }
 
     /**
-     * List files in a Dropbox folder.
+     * List files in a Dropbox folder, following pagination. [recursive] walks
+     * subfolders too. Returns file entries only (folders dropped).
      */
-    fun listFolder(path: String): AppResult<List<FileMetadata>, DomainError> {
+    fun listFolder(path: String, recursive: Boolean = false): AppResult<List<FileMetadata>, DomainError> {
         return executeWithRetry {
-            val body = json.encodeToString(ListFolderArg(path = path))
-                .toRequestBody("application/json".toMediaType())
-            val request = Request.Builder()
-                .url("https://api.dropboxapi.com/2/files/list_folder")
-                .post(body)
-                .header("Authorization", "Bearer $accessToken")
-                .build()
-
-            client.newCall(request).execute().use { response ->
-                if (response.isSuccessful) {
-                    val result = json.decodeFromString<ListFolderResult>(response.body.string())
-                    AppResult.Success(result.entries.filter { it.tag == "file" })
-                } else {
-                    val body = response.body.string()
-                    Log.e(TAG,"list_folder failed: ${response.code} $body")
-                    if (response.code == 409 && body.contains("not_found")) {
-                        AppResult.Error(DomainError.NotFound("Folder not found: $path"))
-                    } else {
-                        AppResult.Error(DomainError.SyncError("list_folder failed (${response.code}): $body"))
+            val all = mutableListOf<FileMetadata>()
+            // Dropbox wants "" for the root, not "/"
+            val arg = ListFolderArg(path = if (path == "/") "" else path, recursive = recursive)
+            var page = listFolderPage("https://api.dropboxapi.com/2/files/list_folder",
+                json.encodeToString(arg))
+            while (true) {
+                when (page) {
+                    is AppResult.Error -> return@executeWithRetry AppResult.Error(page.error)
+                    is AppResult.Success -> {
+                        all += page.data.entries.filter { it.tag == "file" }
+                        if (!page.data.has_more) break
+                        page = listFolderPage(
+                            "https://api.dropboxapi.com/2/files/list_folder/continue",
+                            json.encodeToString(ContinueArg(page.data.cursor))
+                        )
                     }
+                }
+            }
+            AppResult.Success(all.toList())
+        }
+    }
+
+    private fun listFolderPage(url: String, bodyJson: String): AppResult<ListFolderResult, DomainError> {
+        val request = Request.Builder()
+            .url(url)
+            .post(bodyJson.toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $accessToken")
+            .build()
+        client.newCall(request).execute().use { response ->
+            return if (response.isSuccessful) {
+                AppResult.Success(json.decodeFromString<ListFolderResult>(response.body.string()))
+            } else {
+                val body = response.body.string()
+                Log.e(TAG, "list_folder failed: ${response.code} $body")
+                if (response.code == 409 && body.contains("not_found")) {
+                    AppResult.Error(DomainError.NotFound("Folder not found"))
+                } else {
+                    authErrorOr(response.code, body,
+                        DomainError.SyncError("list_folder failed (${response.code}): $body"))
                 }
             }
         }
@@ -209,6 +232,19 @@ class DropboxClient(
     }
 
     /**
+     * Map an auth failure (expired/invalid access token) to SyncAuthError so
+     * executeWithRetry refreshes and retries; anything else keeps [otherwise].
+     * Dropbox signals an expired token with 401, or occasionally a 400/409
+     * whose body names the token.
+     */
+    private fun authErrorOr(code: Int, body: String, otherwise: DomainError): AppResult<Nothing, DomainError> {
+        val isAuth = code == 401 ||
+            body.contains("expired_access_token") ||
+            body.contains("invalid_access_token")
+        return AppResult.Error(if (isAuth) DomainError.SyncAuthError else otherwise)
+    }
+
+    /**
      * Execute a request, retrying once with token refresh on 401.
      */
     private fun <T> executeWithRetry(block: () -> AppResult<T, DomainError>): AppResult<T, DomainError> {
@@ -247,6 +283,9 @@ class DropboxClient(
         val recursive: Boolean = false,
         val include_deleted: Boolean = false
     )
+
+    @Serializable
+    private data class ContinueArg(val cursor: String)
 
     @Serializable
     data class ListFolderResult(

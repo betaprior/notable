@@ -40,6 +40,17 @@ data class Notebook(
 
     // File that its linked to:
     val linkedExternalUri: String? = null,
+
+    // Paginated ("snap") mode: when non-null, this notebook's pages are FIXED to
+    // this height (points) instead of Notable's default growable page, and
+    // vertical scroll crosses page boundaries (a page-size scroll == a swipe).
+    // null = legacy growable + swipe-only navigation. Set for xoj imports (to
+    // the xoj page height) and, per the global default, for new notebooks.
+    // The single source of truth for "is this notebook paginated". Future
+    // continuous-scroll rendering will reuse this height.
+    @ColumnInfo(defaultValue = "NULL")
+    val fixedPageHeightPt: Int? = null,
+
     val createdAt: Date = Date(),
     val updatedAt: Date = Date()
 )
@@ -58,6 +69,9 @@ interface NotebookDao {
 
     @Query("SELECT * FROM notebook WHERE id = (:notebookId)")
     suspend fun getById(notebookId: String): Notebook?
+
+    @Query("SELECT * FROM notebook WHERE linkedExternalUri = :uri LIMIT 1")
+    suspend fun getByLinkedUri(uri: String): Notebook?
 
     @Query("UPDATE notebook SET openPageId=:pageId WHERE id=:notebookId")
     suspend fun setOpenPageId(notebookId: String, pageId: String)
@@ -122,6 +136,11 @@ class BookRepository @Inject constructor(
 
     suspend fun getById(notebookId: String): Notebook? {
         return notebookDao.getById(notebookId)
+    }
+
+    /** The notebook linked to [uri] (e.g. a "dropbox://<path>" identity), or null. */
+    suspend fun getByLinkedUri(uri: String): Notebook? {
+        return notebookDao.getByLinkedUri(uri)
     }
 
     fun getByIdLive(notebookId: String): LiveData<Notebook> {

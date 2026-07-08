@@ -43,6 +43,13 @@ class EditorControlTower(
     private val logEditorControlTower = ShipBook.getLogger("EditorControlTower")
     private var changePageObserverJob: Job? = null
 
+    // Paginated ("snap") scroll: one continuous drag turns AT MOST one page.
+    // A drag emits many scroll samples; without this cooldown each one that sees
+    // the boundary crossed would fire another page turn (and, at the last page,
+    // auto-create a page). Lift and drag again to turn the next page.
+    private var lastSnapAtMs = 0L
+    private val snapCooldownMs = 350L
+
     // Accumulated, not-yet-rendered scroll delta in screen coordinates. Input events add
     // into this; a single consumer coroutine drains and renders it. StateFlow conflation
     // means a burst of input collapses to one render pass per frame the renderer can keep
@@ -252,6 +259,26 @@ class EditorControlTower(
     }
 
     private suspend fun onPageScroll(dragDelta: Offset) {
+        // Paginated ("snap") mode: a vertical scroll that would cross the fixed
+        // page boundary becomes a page change instead -- scroll == swipe. The
+        // page-position decision is a pure function of scroll vs. the page's
+        // fixed height, so continuous rendering can later reuse it.
+        val maxScrollY = page.paginatedMaxScrollY()
+        if (maxScrollY != null) {
+            val zoom = page.zoomLevel.value
+            val newScrollY = page.scroll.y + dragDelta.y / zoom
+            val crossingDown = newScrollY > maxScrollY + 1f
+            val crossingUp = newScrollY < -1f
+            if (crossingDown || crossingUp) {
+                // one page turn per drag gesture (see lastSnapAtMs)
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastSnapAtMs < snapCooldownMs) return
+                lastSnapAtMs = now
+                if (crossingDown) viewModel.snapToNextPage()
+                else viewModel.snapToPreviousPage(maxScrollY)
+                return
+            }
+        }
         // scroll is in Page coordinates
         if (GlobalAppSettings.current.simpleRendering)
             page.simpleUpdateScroll(dragDelta)

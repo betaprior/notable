@@ -103,6 +103,9 @@ class ExportEngine @Inject constructor(
             }
 
             if (uriStr.isNullOrBlank()) return@launch
+            // Dropbox-linked notebooks store a "dropbox://<path>" identity here;
+            // they publish via the Dropbox upload path, not SAF file export.
+            if (com.ethran.notable.dropbox.DropboxLink.isDropbox(uriStr)) return@launch
 
             try {
                 log.i("Exporting book to linked file, uri: $uriStr")

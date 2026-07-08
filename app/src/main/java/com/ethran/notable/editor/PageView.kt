@@ -22,6 +22,7 @@ import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.data.CachedBackground
 import com.ethran.notable.data.PageDataManager
 import com.ethran.notable.data.datastore.GlobalAppSettings
+import com.ethran.notable.data.datastore.pageWidthPt
 import com.ethran.notable.data.db.Image
 import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.data.model.BackgroundType
@@ -139,9 +140,31 @@ class PageView(
     val zoomLevel: MutableStateFlow<Float> =
         MutableStateFlow(pageDataManager.getPageZoom(currentPageId))
 
+    // Paginated ("snap") mode -- set from the notebook's fixedPageHeightPt once
+    // it is known (see EditorView). null = legacy growable page. Single source of
+    // truth for pagination in the editor; the scroll boundary and height both
+    // derive from it, so continuous rendering can later reuse the same value.
+    @Volatile
+    var fixedPageHeightPt: Int? = null
+
+    val isPaginated: Boolean get() = fixedPageHeightPt != null
+
+    /** One fixed page's height in page (unzoomed) coordinates, or null in legacy mode. */
+    val paginatedPageHeightPx: Float?
+        get() = fixedPageHeightPt?.let { it.toFloat() * SCREEN_WIDTH / pageWidthPt }
+
+    /**
+     * Max within-page scroll before crossing to the next page (page coords).
+     * null in legacy mode (unbounded growth). At zoom 1 a fixed page ≈ one
+     * screen, so this is ~0 and any downward scroll crosses -- i.e. scroll==swipe.
+     */
+    fun paginatedMaxScrollY(): Float? =
+        paginatedPageHeightPx?.let { maxOf(0f, it - viewHeight / zoomLevel.value) }
+
     var height: Int
-        get() = pageDataManager.getPageHeight(currentPageId) ?: viewHeight
+        get() = paginatedPageHeightPx?.toInt() ?: pageDataManager.getPageHeight(currentPageId) ?: viewHeight
         set(value) {
+            if (isPaginated) return // fixed-height pages don't grow
             pageDataManager.setPageHeight(currentPageId, value)
         }
 
@@ -224,15 +247,22 @@ class PageView(
      */
     fun changePage(newPageId: String) {
         val oldId = currentPageId
-        log.d("changePage Entry: $oldId -> $newPageId")
+        // Zoom is notebook-global: carry the current zoom to the new page instead
+        // of resetting to that page's stored zoom.
+        val keepZoom = zoomLevel.value
+        log.d("changePage Entry: $oldId -> $newPageId (keepZoom=$keepZoom)")
 
         coroutineScope.launch(Dispatchers.IO) {
             pageDataManager.onExit(oldId, windowedBitmap, coroutineScope)
             pageDataManager.setPage(newPageId)
-            zoomLevel.value = pageDataManager.getPageZoom(currentPageId)
-            pageDataManager.getCachedBitmap(newPageId)?.let { cached ->
+            zoomLevel.value = keepZoom
+            pageDataManager.setPageZoom(currentPageId, keepZoom)
+            // A cached bitmap may have been rendered at a different zoom; when
+            // zoomed, re-render fresh so the new page shows at the correct scale.
+            val cached = if (keepZoom == 1f) pageDataManager.getCachedBitmap(newPageId) else null
+            cached?.let {
                 log.i("PageView: using cached bitmap")
-                windowedBitmap = cached
+                windowedBitmap = it
                 windowedCanvas = Canvas(windowedBitmap)
                 // Check if we have correct size of canvas
                 if (windowedCanvas.width != viewWidth || windowedCanvas.height != viewHeight)
@@ -324,9 +354,8 @@ class PageView(
 
     /**
      * @param alreadyStreamed true when the caller already mirrored these strokes to a live
-     *   receiver via the per-point stream (the live-draw path). All other add routes
-     *   (redo, undo-of-erase, paste, page cut/move) leave it false so the strokes are
-     *   streamed here as complete strokes.
+     *   receiver via the per-point stream (the live-draw path). Kept for call-site clarity;
+     *   streaming no longer branches on it (the committed stroke is always re-sent complete).
      */
     fun addStrokes(strokesToAdd: List<Stroke>, alreadyStreamed: Boolean = false) {
         strokes += strokesToAdd
@@ -334,10 +363,11 @@ class PageView(
 
         saveStrokesToPersistLayer(strokesToAdd)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
-        // Live-drawn strokes already streamed their first band incrementally; send any
-        // extra bands they straddle. Non-live adds (redo/paste) stream all bands.
-        if (alreadyStreamed) strokesToAdd.forEach { inkStream.streamStrokeExtraBands(it) }
-        else inkStream.streamCompleteStrokes(strokesToAdd)
+        // Always stream the authoritative complete stroke on commit, live-drawn or not:
+        // STROKE_BEGIN for a known id makes the receiver replace its rendering, so this
+        // self-heals live datagrams lost in flight (a lost BEGIN would otherwise lose the
+        // whole stroke; lost POINTS would leave permanent gaps).
+        inkStream.streamCompleteStrokes(strokesToAdd, streamPageIndex())
 
 //        persistBitmapDebounced()
     }
@@ -384,9 +414,17 @@ class PageView(
         // re-stream at the new position. Same stroke id, so the group-delete clears every old
         // fragment and the re-stream draws the updated one.
         inkStream.deleteStrokes(strokesToUpdate.map { it.id })
-        inkStream.streamCompleteStrokes(strokesToUpdate)
+        inkStream.streamCompleteStrokes(strokesToUpdate, streamPageIndex())
 //        persistBitmapDebounced()
     }
+
+    /**
+     * Which xournal page complete-stroke streaming should target. In paginated
+     * mode each Notable page is one xournal page (page-local y), so it's the
+     * current page index; in continuous mode the y-band mapping decides, so null.
+     */
+    private fun streamPageIndex(): Int? =
+        if (isPaginated) currentPageNumber.coerceAtLeast(0) else null
 
     fun removeStrokes(strokeIds: List<String>) {
         strokes = strokes.filter { s -> !strokeIds.contains(s.id) }
@@ -404,6 +442,7 @@ class PageView(
     }
 
     fun updateHeightForChange(strokesChanged: List<Stroke>) {
+        if (isPaginated) return // fixed-height pages don't grow to fit strokes
         strokesChanged.forEach {
             val bottomPlusPadding = it.bottom + 50
             if (bottomPlusPadding > height) height = bottomPlusPadding.toInt()

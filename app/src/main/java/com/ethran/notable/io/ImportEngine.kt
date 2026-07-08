@@ -116,7 +116,9 @@ class ImportEngine @Inject constructor(
         // Use rawFileName (with extension) for format detection, fall back to bookTitle
         val detectName = rawFileName ?: bookTitle
         return when {
-            XoppFile.isXournalFile(mimeType, detectName) -> handleImportXopp(uri, optionsWithTitle)
+            XoppFile.isXournalFile(mimeType, detectName) ->
+                handleImportXopp(uri, optionsWithTitle,
+                    isXoj = XoppFile.isXojFile(mimeType, detectName))
             isPdfFile(mimeType, detectName) -> handleImportPDF(uri, optionsWithTitle)
             else -> {
                 val errorMessage = "Unsupported file type: $mimeType"
@@ -128,7 +130,8 @@ class ImportEngine @Inject constructor(
 
     private suspend fun handleImportXopp(
         uri: Uri,
-        options: ImportOptions
+        options: ImportOptions,
+        isXoj: Boolean = false,
     ): AppResult<List<String>, DomainError> {
         log.d("Importing Xopp file...")
         require(options.bookTitle != null) { "bookTitle cannot be null when importing Xopp file" }
@@ -143,9 +146,16 @@ class ImportEngine @Inject constructor(
 
         val importedPageIds = mutableListOf<String>()
         var persistentError: DomainError? = null
+        var firstPageHeightPt: Int? = null
 
         xoppFile.importBook(
             uri = uri,
+            // Classic .xoj files often carry no ruling; default those blank
+            // pages to xournal's lined background so they match the desktop.
+            blankDefaultBackground = if (isXoj) "xournalLined" else null,
+            // xoj pages are discrete and fixed-size: capture the source page
+            // height so the notebook opens in paginated ("snap") mode.
+            onFirstPageHeightPt = if (isXoj) ({ h -> firstPageHeightPt = h }) else null,
             onPageCreated = { page ->
                 try {
                     // TODO: Handle conflicts with existing pages.
@@ -180,6 +190,14 @@ class ImportEngine @Inject constructor(
                 }
             }
         )
+
+        // xoj imports are paginated: fix the notebook's page height to the
+        // source page size so vertical scroll maps 1:1 onto discrete pages.
+        if (isXoj && firstPageHeightPt != null) {
+            bookRepo.getById(book.id)?.let {
+                bookRepo.updatePreservingTimestamp(it.copy(fixedPageHeightPt = firstPageHeightPt))
+            }
+        }
 
         return persistentError?.let { AppResult.Error(it) } ?: AppResult.Success(importedPageIds)
     }

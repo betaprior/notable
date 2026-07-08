@@ -171,7 +171,11 @@ class LibraryViewModel @Inject constructor(
             val notebook = Notebook(
                 parentFolderId = _folderId.value,
                 defaultBackground = settings.defaultNativeTemplate,
-                defaultBackgroundType = BackgroundType.Native.key
+                defaultBackgroundType = BackgroundType.Native.key,
+                // Paginated ("snap") pages by default for new notebooks; fixed to
+                // the configured page size. Off => legacy growable page.
+                fixedPageHeightPt = if (settings.paginatedScrollByDefault)
+                    settings.pageSize.heightPt else null
             )
             bookRepository.create(notebook)
             _newlyCreatedBookId.value = notebook.id

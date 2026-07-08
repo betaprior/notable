@@ -17,6 +17,7 @@ import com.ethran.notable.data.model.BackgroundType
 import com.ethran.notable.di.ApplicationScope
 import com.ethran.notable.editor.EditorViewModel.Companion.DEFAULT_PEN_SETTINGS
 import com.ethran.notable.editor.canvas.CanvasEventBus
+import androidx.compose.ui.geometry.Offset
 import com.ethran.notable.editor.state.ClipboardStore
 import com.ethran.notable.editor.state.History
 import com.ethran.notable.editor.state.Mode
@@ -92,6 +93,8 @@ data class ToolbarUiState(
     val streamingEnabled: Boolean = false,
     val isDrawing: Boolean = true,
     val isQuickNavOpen: Boolean = false,
+    // Paginated ("snap") page height for this notebook, or null in legacy mode.
+    val fixedPageHeightPt: Int? = null,
 ) {
     val isDrawingAllowed: Boolean
         get() = !isSelectionActive &&
@@ -137,11 +140,21 @@ sealed class ToolbarAction {
     object SaveToDropbox : ToolbarAction()
     object ToggleInkStream : ToolbarAction()
 
+    /**
+     * Open this document in xournal on the laptop (via the inkhub broker) and
+     * stream to it; auto-links the notebook to Dropbox first if needed.
+     */
+    object StartStreaming : ToolbarAction()
+
     /** Set an absolute zoom level, anchored on the current view center. */
     data class SetZoom(val level: Float) : ToolbarAction()
 
     /** Fit the page width to the visible view (fixes right-edge clipping). */
     object ZoomFitWidth : ToolbarAction()
+
+    /** Page navigation from the toolbar (same as a swipe). */
+    object PreviousPage : ToolbarAction()
+    object NextPage : ToolbarAction()
 }
 
 
@@ -321,6 +334,8 @@ class EditorViewModel @Inject constructor(
             ToolbarAction.ResetView -> sendCanvasCommand(CanvasCommand.ResetView)
             is ToolbarAction.SetZoom -> sendCanvasCommand(CanvasCommand.SetZoom(action.level))
             ToolbarAction.ZoomFitWidth -> sendCanvasCommand(CanvasCommand.ZoomFitWidth)
+            ToolbarAction.PreviousPage -> goToPreviousPage()
+            ToolbarAction.NextPage -> goToNextPage()
             ToolbarAction.ClearAllStrokes -> sendCanvasCommand(CanvasCommand.ClearAllStrokes)
 
             ToolbarAction.NavigateToLibrary -> handleNavigateToLibrary()
@@ -336,6 +351,7 @@ class EditorViewModel @Inject constructor(
 
             ToolbarAction.SaveToDropbox -> sendUiEvent(EditorUiEvent.SaveToDropbox)
             ToolbarAction.ToggleInkStream -> handleToggleInkStream()
+            ToolbarAction.StartStreaming -> handleStartStreaming()
         }
     }
 
@@ -534,6 +550,9 @@ class EditorViewModel @Inject constructor(
         }
 
         val hasDropbox = bookId != null && dropboxSyncManager.isDropboxLinked(bookId)
+        val fixedHeight = bookId?.let {
+            appRepository.bookRepository.getById(it)?.fixedPageHeightPt
+        }
 
         _toolbarState.update {
             it.copy(
@@ -545,7 +564,8 @@ class EditorViewModel @Inject constructor(
                 backgroundType = page.backgroundType,
                 backgroundPath = page.background,
                 backgroundPageNumber = bgPageNumber,
-                hasDropboxLink = hasDropbox
+                hasDropboxLink = hasDropbox,
+                fixedPageHeightPt = fixedHeight
             )
         }
     }
@@ -617,6 +637,31 @@ class EditorViewModel @Inject constructor(
         log.v("goToPreviousPage")
         viewModelScope.launch(Dispatchers.IO) {
             getPreviousPageId()?.let { changePage(it) }
+        }
+    }
+
+    /**
+     * Paginated-mode navigation: crossing a page boundary by scrolling is the
+     * same page change as a swipe, but we pre-position the destination page's
+     * scroll so the motion feels continuous -- land at the TOP of the next page
+     * when scrolling down, and at the BOTTOM of the previous page when scrolling
+     * up. Mirrors swipe exactly at the ends (no-op past the first/last page).
+     */
+    fun snapToNextPage() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val nextId = getNextPageId() ?: return@launch
+            val cur = pageDataManager.getPageScroll(currentPageId)
+            pageDataManager.setPageScroll(nextId, Offset(cur.x, 0f))
+            changePage(nextId)
+        }
+    }
+
+    fun snapToPreviousPage(prevPageMaxScrollY: Float) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val prevId = getPreviousPageId() ?: return@launch
+            val cur = pageDataManager.getPageScroll(currentPageId)
+            pageDataManager.setPageScroll(prevId, Offset(cur.x, prevPageMaxScrollY))
+            changePage(prevId)
         }
     }
 
@@ -732,6 +777,83 @@ class EditorViewModel @Inject constructor(
                 is com.ethran.notable.utils.AppResult.Error -> {
                     snackDispatcher.showOrUpdateSnack(
                         SnackConf(text = "Dropbox save failed: ${result.error.userMessage}", duration = 5000)
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * "Start streaming" (hub flow): make sure the notebook is Dropbox-linked
+     * (auto-link + initial upload for brand-new notebooks), ask the inkhub
+     * broker on the laptop to open the document in xournal, then stream to
+     * the UDP port it returns.
+     */
+    fun handleStartStreaming() {
+        val notebookId = bookId ?: return
+        val settings = inkStreamClient.settings.value
+        if (settings.host.isBlank()) {
+            viewModelScope.launch {
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(text = "Set the laptop host in Settings > Ink Stream first", duration = 4000)
+                )
+            }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            // Ensure legacy manifest links are bridged onto the notebook before
+            // we read its identity (idempotent; avoids racing the async
+            // migration kicked off at manager construction).
+            dropboxSyncManager.migrateLegacyLinks()
+            // Identity is the path stored on the notebook. If it's already
+            // Dropbox-linked, stream straight to that path -- no manifest
+            // lookup, no forking a new file.
+            var dropboxPath = dropboxSyncManager.linkedPath(notebookId)
+            if (dropboxPath == null) {
+                // Not linked yet: assign a path, publish the initial snapshot,
+                // and (only on a successful upload) stamp the link. A failed
+                // upload leaves the notebook unlinked so a retry is clean.
+                val title = appRepository.bookRepository.getById(notebookId)?.title ?: "untitled"
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(text = "Linking to Dropbox...", duration = 2000)
+                )
+                when (val linked = dropboxSyncManager.linkAndUpload(notebookId, title)) {
+                    is com.ethran.notable.utils.AppResult.Success -> {
+                        dropboxPath = linked.data
+                        _toolbarState.update { it.copy(hasDropboxLink = true) }
+                    }
+                    is com.ethran.notable.utils.AppResult.Error -> {
+                        snackDispatcher.showOrUpdateSnack(
+                            SnackConf(
+                                text = "Initial Dropbox upload failed: ${linked.error.userMessage}",
+                                duration = 5000
+                            )
+                        )
+                        return@launch
+                    }
+                }
+            }
+
+            snackDispatcher.showOrUpdateSnack(
+                SnackConf(text = "Opening on ${settings.host}...", duration = 3000)
+            )
+            when (val r = com.ethran.notable.ink.InkHubClient.openDoc(
+                settings.host, settings.hubPort, dropboxPath, settings.secret
+            )) {
+                is com.ethran.notable.ink.InkHubClient.OpenResult.Ok -> {
+                    inkStreamClient.saveSettings(
+                        settings.copy(enabled = true, port = r.udpPort, sessionToken = r.token)
+                    )
+                    snackDispatcher.showOrUpdateSnack(
+                        SnackConf(
+                            text = "Streaming to ${settings.host}:${r.udpPort}",
+                            duration = 3000
+                        )
+                    )
+                }
+                is com.ethran.notable.ink.InkHubClient.OpenResult.Error -> {
+                    snackDispatcher.showOrUpdateSnack(
+                        SnackConf(text = "Hub error: ${r.message}", duration = 5000)
                     )
                 }
             }

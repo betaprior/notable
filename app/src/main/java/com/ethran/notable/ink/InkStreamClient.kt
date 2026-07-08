@@ -85,16 +85,34 @@ class InkStreamClient @Inject constructor(
     fun loadSettings() {
         scope.launch {
             val loaded = kvProxy.get(INK_STREAM_SETTINGS_KEY, InkStreamSettings.serializer())
-            if (loaded != null) _settings.value = loaded
+            if (loaded != null) {
+                _settings.value = loaded
+                tokenBytes = parseToken(loaded.sessionToken)
+            }
         }
     }
 
     fun saveSettings(settings: InkStreamSettings) {
         _settings.value = settings
+        tokenBytes = parseToken(settings.sessionToken)
         // force re-resolution of address/socket on next stroke
         closeSocket()
         scope.launch {
             kvProxy.setKv(INK_STREAM_SETTINGS_KEY, settings, InkStreamSettings.serializer())
+        }
+    }
+
+    // Per-session auth token from the hub (8 bytes hex); packets carry it in a
+    // v2 header. Null (manual/hubless mode) sends bare v1 headers.
+    @Volatile
+    private var tokenBytes: ByteArray? = null
+
+    private fun parseToken(hex: String): ByteArray? {
+        if (hex.length != 16) return null
+        return try {
+            ByteArray(8) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        } catch (_: NumberFormatException) {
+            null
         }
     }
 
@@ -142,13 +160,23 @@ class InkStreamClient @Inject constructor(
      * begin+points+end, so the receiver renders them. The live-draw path must NOT call
      * this (it streams incrementally); it passes alreadyStreamed=true to addStrokes.
      */
-    fun streamCompleteStrokes(strokes: List<Stroke>) {
+    /**
+     * @param paginatedPageIndex when non-null, the notebook is paginated: every
+     *   stroke belongs to this one xournal page and its y is already page-local,
+     *   so send it to that page with no y-band splitting. When null (continuous
+     *   growable page), map by y-coordinate into pageHeight-tall bands.
+     */
+    fun streamCompleteStrokes(strokes: List<Stroke>, paginatedPageIndex: Int? = null) {
         if (!isEnabled || strokes.isEmpty()) return
         val sf = scaleFactor
         val ph = pageHeightPt.toFloat()
         for (stroke in strokes) {
             if (stroke.points.isEmpty()) continue
-            for (band in bandRange(stroke, sf, ph)) sendStrokeFragment(stroke, band, sf, ph)
+            if (paginatedPageIndex != null) {
+                sendStrokeFragment(stroke, paginatedPageIndex, sf, ph, pageLocalY = true)
+            } else {
+                for (band in bandRange(stroke, sf, ph)) sendStrokeFragment(stroke, band, sf, ph)
+            }
         }
     }
 
@@ -188,10 +216,14 @@ class InkStreamClient @Inject constructor(
      * xournal's page clipbox clips it to the page, so the part on this page shows and the
      * rest is off-page -- the same render-and-clip Notable's PDF pagination uses.
      */
-    private fun sendStrokeFragment(stroke: Stroke, band: Int, sf: Float, pageHeight: Float) {
+    private fun sendStrokeFragment(
+        stroke: Stroke, band: Int, sf: Float, pageHeight: Float,
+        // paginated: stroke y is already page-local, so don't subtract a band offset
+        pageLocalY: Boolean = false,
+    ) {
         val group = uuidBytes(stroke.id) ?: return
         val frag = fragUuid(group, band)
-        val yOffset = band * pageHeight
+        val yOffset = if (pageLocalY) 0f else band * pageHeight
         val pts = stroke.points
 
         sendBegin(frag, group, band, penToTool(stroke.pen),
@@ -238,7 +270,34 @@ class InkStreamClient @Inject constructor(
         enqueue(buf)
     }
 
-    /** Tell the receiver to remove strokes with these Notable ids (erase / scribble-erase). */
+    /**
+     * Tell the receiver which strokes are now committed to the synced file.
+     * Sent after a successful Dropbox upload: [sha256] is the hash of the
+     * uploaded bytes, [strokeIds] the Notable stroke ids included in it. When
+     * the file with that hash reaches the receiver's disk (Dropbox sync), it
+     * reloads the document and drops exactly those overlay strokes.
+     */
+    fun syncMarker(sha256: ByteArray, strokeIds: List<String>) {
+        if (!isEnabled || sha256.size != 32) return
+        // every chunk repeats the hash; 32+2+16*80 = 1314 < MTU
+        val chunks = if (strokeIds.isEmpty()) listOf(emptyList()) else strokeIds.chunked(80)
+        chunks.forEach { chunk ->
+            val uuids = chunk.mapNotNull { uuidBytes(it) }
+            val buf = header(MSG_SYNC_MARKER, 32 + 2 + 16 * uuids.size)
+            buf.put(sha256)
+            buf.putShort(uuids.size.toShort())
+            uuids.forEach { buf.put(it) }
+            enqueueRepeated(buf) // idempotent; also self-heals via the next upload
+        }
+    }
+
+    /**
+     * Tell the receiver to remove strokes with these Notable ids (erase /
+     * scribble-erase). Sent [LOSSY_REPEATS] times, spaced out: DELETE is
+     * idempotent on the receiver, and a single lost datagram would otherwise
+     * leave phantom ink on the mirror that even reloads preserve (erased
+     * strokes are absent from uploads, so sync markers never drop them).
+     */
     fun deleteStrokes(strokeIds: List<String>) {
         if (!isEnabled || strokeIds.isEmpty()) return
         // chunk so each datagram stays well under the MTU (2 + 16*n bytes)
@@ -248,7 +307,7 @@ class InkStreamClient @Inject constructor(
             val buf = header(MSG_DELETE, 2 + 16 * uuids.size)
             buf.putShort(uuids.size.toShort())
             uuids.forEach { buf.put(it) }
-            enqueue(buf)
+            enqueueRepeated(buf)
         }
     }
 
@@ -291,6 +350,18 @@ class InkStreamClient @Inject constructor(
         sendChannel.trySend(buf.array())
     }
 
+    /** Send now plus spaced repeats, for idempotent must-arrive messages (UDP loss). */
+    private fun enqueueRepeated(buf: ByteBuffer) {
+        val data = buf.array()
+        sendChannel.trySend(data)
+        scope.launch {
+            for (delayMs in REPEAT_DELAYS_MS) {
+                kotlinx.coroutines.delay(delayMs)
+                sendChannel.trySend(data)
+            }
+        }
+    }
+
     private fun trySend(data: ByteArray) {
         try {
             val s = socket ?: DatagramSocket().also { socket = it }
@@ -317,13 +388,18 @@ class InkStreamClient @Inject constructor(
     // ---- encoding helpers ----
 
     private fun header(msgType: Int, payloadLen: Int): ByteBuffer {
-        val buf = ByteBuffer.allocate(6 + payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+        // v1: XINK | ver | type. v2 (hub sessions): XINK | 2 | type | token[8].
+        // The receiver only accepts v2-with-matching-token once a token is set.
+        val token = tokenBytes
+        val headerLen = if (token != null) 14 else 6
+        val buf = ByteBuffer.allocate(headerLen + payloadLen).order(ByteOrder.LITTLE_ENDIAN)
         buf.put('X'.code.toByte())
         buf.put('I'.code.toByte())
         buf.put('N'.code.toByte())
         buf.put('K'.code.toByte())
-        buf.put(PROTO_VERSION)
+        buf.put(if (token != null) 2 else PROTO_VERSION)
         buf.put(msgType.toByte())
+        if (token != null) buf.put(token)
         return buf
     }
 
@@ -358,9 +434,13 @@ class InkStreamClient @Inject constructor(
         private const val MSG_STROKE_END = 4
         private const val MSG_DELETE = 5
         private const val MSG_SET_PAGE = 6
+        private const val MSG_SYNC_MARKER = 7
 
-        // points per POINTS datagram for complete-stroke streaming: 6+16+4+100*12 = 1226 < MTU
+        // points per POINTS datagram for complete-stroke streaming: 14+16+4+100*12 = 1234 < MTU
         private const val POINTS_PER_DATAGRAM = 100
+
+        // spaced repeats for idempotent must-arrive messages (DELETE, SYNC_MARKER)
+        private val REPEAT_DELAYS_MS = longArrayOf(150, 450)
 
         private const val TOOL_PEN = 0
         private const val TOOL_HIGHLIGHTER = 2
