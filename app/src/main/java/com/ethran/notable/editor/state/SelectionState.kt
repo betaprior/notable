@@ -104,7 +104,9 @@ class SelectionState {
         val bmpBottom = bmpTop + h
 
         // Mirror SelectorBitmap's button-row placement: offset (xPos, -100) from the bitmap.
-        val buttonCount = if (isResizable()) 7 else 5
+        // +2 for the get/set stroke-width buttons shown when strokes are selected.
+        val buttonCount = (if (isResizable()) 7 else 5) +
+                (if (!selectedStrokes.isNullOrEmpty()) 2 else 0)
         val toolbarPadding = 4
         val xPos = w / 2 - buttonCount * (BUTTON_SIZE + 5 * toolbarPadding)
         val rowWidth = buttonCount * (BUTTON_SIZE + 4 * toolbarPadding)

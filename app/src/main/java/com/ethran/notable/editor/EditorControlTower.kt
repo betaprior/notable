@@ -326,6 +326,47 @@ class EditorControlTower(
         }
     }
 
+    /** Last custom stroke width (for the selection set-width popup's C modal). */
+    fun lastCustomWidth(): Float = viewModel.toolbarState.value.lastCustomWidth
+
+    /** Dominant stroke width in the current selection, or null. */
+    fun selectionDominantWidth(): Float? =
+        viewModel.selectionState.selectedStrokes
+            ?.groupingBy { it.size }?.eachCount()?.maxByOrNull { it.value }?.key
+
+    /** Set the stroke width of every selected stroke (undoable). */
+    fun setSelectionStrokeWidth(width: Float, isCustom: Boolean) {
+        val sel = viewModel.selectionState.selectedStrokes ?: return
+        if (sel.isEmpty()) return
+        val updated = sel.map { com.ethran.notable.editor.utils.setStrokeWidth(it, width) }
+        page.updateStrokes(updated)
+        viewModel.selectionState.selectedStrokes = updated // keep snapshot current
+        if (isCustom) viewModel.noteCustomWidth(width)
+        history.addOperationsToHistory(
+            listOf(
+                Operation.DeleteStroke(updated.map { it.id }),
+                Operation.AddStroke(sel) // undo restores the original widths
+            )
+        )
+        scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
+    }
+
+    /**
+     * Adopt the dominant stroke width of the selection as the current pen width.
+     * If it isn't a preset it shows as "C" (custom) and becomes the last custom width.
+     */
+    fun getSelectionStrokeWidth() {
+        val sel = viewModel.selectionState.selectedStrokes ?: return
+        if (sel.isEmpty()) return
+        val dominant = sel.groupingBy { it.size }.eachCount()
+            .maxByOrNull { it.value }?.key ?: return
+        viewModel.applyPenWidth(
+            dominant,
+            isCustom = !com.ethran.notable.editor.utils.isPresetWidth(dominant)
+        )
+        showHint("Width: ${com.ethran.notable.editor.utils.widthLabel(dominant)}")
+    }
+
     fun duplicateSelection(overlapOriginal: Boolean = false) {
         // finish ongoing movement
         applySelectionDisplace()

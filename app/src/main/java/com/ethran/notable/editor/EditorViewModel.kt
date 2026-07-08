@@ -95,6 +95,8 @@ data class ToolbarUiState(
     val isQuickNavOpen: Boolean = false,
     // Paginated ("snap") page height for this notebook, or null in legacy mode.
     val fixedPageHeightPt: Int? = null,
+    // last width entered via the "C" custom stroke-width chip (pre-fills the modal)
+    val lastCustomWidth: Float = 15f,
 ) {
     val isDrawingAllowed: Boolean
         get() = !isSelectionActive &&
@@ -155,6 +157,9 @@ sealed class ToolbarAction {
     /** Page navigation from the toolbar (same as a swipe). */
     object PreviousPage : ToolbarAction()
     object NextPage : ToolbarAction()
+
+    /** Set the current pen's stroke width. isCustom=true persists it as the last custom width. */
+    data class SetPenWidth(val width: Float, val isCustom: Boolean) : ToolbarAction()
 }
 
 
@@ -256,7 +261,8 @@ class EditorViewModel @Inject constructor(
                 pen = settings?.pen ?: Pen.BALLPEN,
                 eraser = settings?.eraser ?: Eraser.PEN,
                 isToolbarOpen = settings?.isToolbarOpen ?: false,
-                penSettings = settings?.penSettings ?: DEFAULT_PEN_SETTINGS
+                penSettings = settings?.penSettings ?: DEFAULT_PEN_SETTINGS,
+                lastCustomWidth = settings?.lastCustomWidth ?: 15f
             )
         }
     }
@@ -336,6 +342,7 @@ class EditorViewModel @Inject constructor(
             ToolbarAction.ZoomFitWidth -> sendCanvasCommand(CanvasCommand.ZoomFitWidth)
             ToolbarAction.PreviousPage -> goToPreviousPage()
             ToolbarAction.NextPage -> goToNextPage()
+            is ToolbarAction.SetPenWidth -> applyPenWidth(action.width, action.isCustom)
             ToolbarAction.ClearAllStrokes -> sendCanvasCommand(CanvasCommand.ClearAllStrokes)
 
             ToolbarAction.NavigateToLibrary -> handleNavigateToLibrary()
@@ -385,6 +392,27 @@ class EditorViewModel @Inject constructor(
         val newSettings = _toolbarState.value.penSettings.toMutableMap()
         newSettings[pen.penName] = setting
         _toolbarState.update { it.copy(penSettings = newSettings) }
+        saveToolbarState()
+    }
+
+    /** Set the current pen's stroke width; optionally remember it as the last custom width. */
+    fun applyPenWidth(width: Float, isCustom: Boolean) {
+        val pen = _toolbarState.value.pen
+        val cur = _toolbarState.value.penSettings[pen.penName] ?: return
+        val newSettings = _toolbarState.value.penSettings.toMutableMap()
+        newSettings[pen.penName] = cur.copy(strokeSize = width)
+        _toolbarState.update {
+            it.copy(
+                penSettings = newSettings,
+                lastCustomWidth = if (isCustom) width else it.lastCustomWidth
+            )
+        }
+        saveToolbarState()
+    }
+
+    /** Remember a width as the last custom (e.g. a custom width applied to a selection). */
+    fun noteCustomWidth(width: Float) {
+        _toolbarState.update { it.copy(lastCustomWidth = width) }
         saveToolbarState()
     }
 
@@ -578,7 +606,8 @@ class EditorViewModel @Inject constructor(
                 mode = currentState.mode,
                 pen = currentState.pen,
                 eraser = currentState.eraser,
-                penSettings = currentState.penSettings
+                penSettings = currentState.penSettings,
+                lastCustomWidth = currentState.lastCustomWidth
             )
         )
     }

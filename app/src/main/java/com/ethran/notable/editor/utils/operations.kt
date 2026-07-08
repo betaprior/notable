@@ -180,6 +180,22 @@ fun offsetStroke(stroke: Stroke, offset: Offset): Stroke {
     )
 }
 
+/**
+ * Return a copy of [stroke] with a new [width], keeping the same id and points.
+ * The bounding box is inset by the stroke width (see draw.kt), so it grows/shrinks
+ * by the width delta on every side.
+ */
+fun setStrokeWidth(stroke: Stroke, width: Float): Stroke {
+    val d = stroke.size - width // old - new
+    return stroke.copy(
+        size = width,
+        left = stroke.left + d,
+        top = stroke.top + d,
+        right = stroke.right - d,
+        bottom = stroke.bottom - d,
+    )
+}
+
 fun offsetImage(image: Image, offset: Offset): Image {
     return image.copy(
         x = image.x + offset.x.toInt(),

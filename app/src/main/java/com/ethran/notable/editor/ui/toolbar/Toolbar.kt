@@ -269,6 +269,15 @@ fun ToolbarContent(
 
                     VerticalDivider()
 
+                    // Standalone stroke-width widget (S/M/L/XL/C) for the current pen.
+                    StrokeWidthToolbarButton(
+                        current = uiState.penSettings[uiState.pen.penName]?.strokeSize ?: 5f,
+                        lastCustom = uiState.lastCustomWidth,
+                        onPick = { w, c -> onAction(ToolbarAction.SetPenWidth(w, c)) },
+                    )
+
+                    VerticalDivider()
+
                     EraserToolbarButton(
                         isSelected = uiState.mode == Mode.Erase,
                         onSelect = { onAction(ToolbarAction.ChangeMode(Mode.Erase)) },

@@ -18,7 +18,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 
-const val persistVersion = 2
+const val persistVersion = 3
 
 @Singleton
 class EditorSettingCacheManager
@@ -33,7 +33,9 @@ class EditorSettingCacheManager
         val pen: Pen,
         val eraser: Eraser? = Eraser.PEN,
         val penSettings: NamedSettings,
-        val mode: Mode
+        val mode: Mode,
+        // last width entered via the "C" (custom) stroke-width chip
+        val lastCustomWidth: Float = 15f,
     )
 
     private val scope = CoroutineScope(Dispatchers.IO)
