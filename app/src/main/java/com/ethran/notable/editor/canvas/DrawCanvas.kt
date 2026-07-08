@@ -39,6 +39,17 @@ class DrawCanvas(
     private fun hasAnyStylusPointer(event: MotionEvent): Boolean =
         (0 until event.pointerCount).any { index -> isStylusOrEraser(event.getToolType(index)) }
 
+    // Decided at ACTION_DOWN, held for the gesture: true when the stylus went down over the
+    // active selection, so the gesture is passed to Compose rather than consumed for drawing.
+    private var stylusOverSelection = false
+
+    private fun isInsideActiveSelection(x: Float, y: Float): Boolean {
+        val sel = viewModel.selectionState
+        if (!sel.isNonEmpty()) return false
+        val bounds = sel.screenBounds(page) ?: return false
+        return bounds.contains(x.toInt(), y.toInt())
+    }
+
     // Overriding dispatchTouchEvent catches the event BEFORE it is routed
     // to onTouchEvent or sent down to nested Android components.
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
@@ -49,6 +60,19 @@ class DrawCanvas(
 
         // 2. Intercept at the highest level if a stylus is present
         if (hasAnyStylusPointer(event)) {
+            // While a selection is active the raw input reader is released (see
+            // OnyxInputHandler.updateIsDrawing), so the stylus arrives as normal MotionEvents.
+            // When one starts over the selection, let it fall through to the Compose selection UI
+            // (drag the bitmap / tap buttons) instead of consuming it. A pen-down anywhere else
+            // is normal drawing / a fresh lasso and is consumed as usual. Decided at ACTION_DOWN,
+            // held for the gesture.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                stylusOverSelection = isInsideActiveSelection(event.getX(0), event.getY(0))
+            }
+            if (stylusOverSelection) {
+                return super.dispatchTouchEvent(event)
+            }
+
             // Block parent scrolling
             parent?.requestDisallowInterceptTouchEvent(true)
 

@@ -220,16 +220,26 @@ class OnyxInputHandler(
     }
 
     suspend fun updateIsDrawing() {
-        if(touchHelper == null) return
-        log.i("Update is drawing: $toolbarState.isDrawing")
+        val th = touchHelper ?: return
+        val selectionActive = viewModel.selectionState.isNonEmpty()
+        log.i("Update is drawing: ${toolbarState.isDrawing}, selection: $selectionActive")
         if (toolbarState.isDrawing) {
-            touchHelper!!.setRawDrawingEnabled(true)
+            th.setRawInputReaderEnable(true)
+            th.setRawDrawingEnabled(true)
         } else {
             // Check if drawing is completed
             CanvasEventBus.waitForDrawing()
             // draw to view, before showing drawing, avoid stutter
             drawCanvas.refreshManager.drawCanvasToView(null)
-            touchHelper!!.setRawDrawingEnabled(false)
+            th.setRawDrawingEnabled(false)
+            // When a selection is active, also release the raw input READER so the stylus is
+            // delivered to Compose (drag the bitmap / tap buttons) as normal MotionEvents,
+            // instead of being swallowed by the firmware. Raw drawing stays OFF -- this is the
+            // stable state: no firmware pen-grab mid-drag, no stray ink, no surface churn. The
+            // moving selection can't repaint live under the pen (the pen holds the EPD out of
+            // its animating mode), so a stylus drag is finalized/shown on pen-up by committing
+            // it (see EditorControlTower.finishStylusSelectionDrag).
+            th.setRawInputReaderEnable(!selectionActive)
         }
     }
 

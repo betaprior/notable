@@ -3,6 +3,7 @@ package com.ethran.notable.editor
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import com.ethran.notable.SCREEN_HEIGHT
 import com.ethran.notable.SCREEN_WIDTH
 import com.ethran.notable.data.datastore.GlobalAppSettings
@@ -259,6 +260,18 @@ class EditorControlTower(
     }
 
 
+    // A stylus selection drag ended. Unlike a finger, the moving selection can't repaint live
+    // under the pen (raw drawing is off during a selection), and the floating overlay won't show
+    // until something kicks the EPD. So finalize on lift the same way a tap-outside does: commit
+    // the displacement (writes the strokes into the page), clear the selection, and re-enable
+    // drawing -- which redraws the page and shows the result. Net effect: the selection snaps to
+    // its new position when the stylus lifts, no extra tap needed.
+    fun finishStylusSelectionDrag() {
+        applySelectionDisplace()
+        viewModel.selectionState.reset()
+        setIsDrawing(true)
+    }
+
     // when selection is moved, we need to redraw canvas
     fun applySelectionDisplace() {
         viewModel.selectionState.applySelectionDisplaceAndCommit(page, history)
@@ -286,11 +299,17 @@ class EditorControlTower(
         }
     }
 
-    fun duplicateSelection() {
+    fun duplicateSelection(overlapOriginal: Boolean = false) {
         // finish ongoing movement
         applySelectionDisplace()
         viewModel.selectionState.duplicateSelection()
-
+        // Under the stylus the floating copy can't be shown (only committed page content paints),
+        // so the user grabs it blindly and drags it into place (it commits + appears on lift).
+        // Placing the copy directly on top of the original means they grab exactly the strokes
+        // they can see. (Finger keeps the default +50 offset so the copy is visibly separate.)
+        if (overlapOriginal) {
+            viewModel.selectionState.selectionDisplaceOffset = IntOffset.Zero
+        }
     }
 
     fun cutSelectionToClipboard(context: Context) {

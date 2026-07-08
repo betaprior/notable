@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -23,6 +26,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -59,10 +64,24 @@ fun SelectedBitmap(
     val selectionStartOffset =
         controlTower.page.applyZoom(selectionState.selectionStartOffset ?: IntOffset(0, 0))
 
+    // Track whether the pointer touching the selection UI is a stylus, so selection-button
+    // actions (e.g. duplicate) can adapt: the stylus can't show a floating copy, so it's placed
+    // on top of the original to be grabbed and dragged blind. Recorded on the Initial pass so it
+    // is set before a button's click handler runs.
+    var lastPointerStylus by remember { mutableStateOf(false) }
 
     Box(
         Modifier
             .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.firstOrNull()
+                            ?.let { lastPointerStylus = it.type == PointerType.Stylus }
+                    }
+                }
+            }
             .noRippleClickable {
                 controlTower.applySelectionDisplace()
                 selectionState.reset()
@@ -82,7 +101,19 @@ fun SelectedBitmap(
                     )
                 }
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
+                    // A finger drag repaints the floating selection live and stays floating on
+                    // lift (commit on tap). A stylus drag can't repaint live under the pen, so on
+                    // lift we finalize it (commit + show) instead of leaving it invisible.
+                    var dragWasStylus = false
+                    detectDragGestures(
+                        onDragEnd = {
+                            if (dragWasStylus) controlTower.finishStylusSelectionDrag()
+                        },
+                        onDragCancel = {
+                            if (dragWasStylus) controlTower.finishStylusSelectionDrag()
+                        },
+                    ) { change, dragAmount ->
+                        dragWasStylus = change.type == PointerType.Stylus
                         change.consume()
                         selectionState.selectionDisplaceOffset =
                             controlTower.page.removeZoom(
@@ -97,7 +128,7 @@ fun SelectedBitmap(
                 .combinedClickable(
                     indication = null, interactionSource = remember { MutableInteractionSource() },
                     onClick = {},
-                    onDoubleClick = { controlTower.duplicateSelection() }
+                    onDoubleClick = { controlTower.duplicateSelection(overlapOriginal = lastPointerStylus) }
                 )
         )
 
@@ -167,7 +198,7 @@ fun SelectedBitmap(
                     ToolbarButton(
                         vectorIcon = FeatherIcons.Copy,
                         isSelected = false,
-                        onSelect = { controlTower.duplicateSelection() },
+                        onSelect = { controlTower.duplicateSelection(overlapOriginal = lastPointerStylus) },
                         modifier = Modifier.height(BUTTON_SIZE.dp)
                     )
                 }

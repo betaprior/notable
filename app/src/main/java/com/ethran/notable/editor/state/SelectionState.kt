@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.toOffset
 import androidx.core.graphics.createBitmap
+import com.ethran.notable.data.datastore.BUTTON_SIZE
 import com.ethran.notable.data.db.Image
 import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.data.model.SimplePointF
@@ -79,6 +80,46 @@ class SelectionState {
 
     fun isResizable(): Boolean {
         return selectedImages?.count() == 1 && selectedStrokes.isNullOrEmpty()
+    }
+
+    /**
+     * On-screen bounding box (px) of the whole selection UI: the selection bitmap plus the
+     * floating button strip that sits ~100px above it (see [com.ethran.notable.editor.ui.SelectedBitmap]).
+     * Used to carve this region out of the Onyx raw-drawing surface, so a stylus over the
+     * selection is delivered to the Compose selection UI (drag/buttons) while the pen still
+     * lassos elsewhere. Null when there is no active selection.
+     */
+    fun screenBounds(page: PageView): Rect? {
+        val rectPage = selectionRect ?: return null
+        val startState = selectionStartOffset ?: return null
+        val dispState = selectionDisplaceOffset ?: IntOffset(0, 0)
+
+        val topLeft = page.applyZoom(startState + dispState) // screen px
+        val screenRect = page.toScreenCoordinates(rectPage)
+        val w = screenRect.width()
+        val h = screenRect.height()
+        val bmpLeft = topLeft.x
+        val bmpTop = topLeft.y
+        val bmpRight = bmpLeft + w
+        val bmpBottom = bmpTop + h
+
+        // Mirror SelectorBitmap's button-row placement: offset (xPos, -100) from the bitmap.
+        val buttonCount = if (isResizable()) 7 else 5
+        val toolbarPadding = 4
+        val xPos = w / 2 - buttonCount * (BUTTON_SIZE + 5 * toolbarPadding)
+        val rowWidth = buttonCount * (BUTTON_SIZE + 4 * toolbarPadding)
+        val rowHeight = BUTTON_SIZE + 4 * toolbarPadding
+        val btnLeft = bmpLeft + xPos
+        val btnRight = btnLeft + rowWidth
+        val btnTop = bmpTop - 100 - rowHeight
+
+        val margin = 24
+        return Rect(
+            minOf(bmpLeft, btnLeft) - margin,
+            minOf(bmpTop, btnTop) - margin,
+            maxOf(bmpRight, btnRight) + margin,
+            bmpBottom + margin
+        )
     }
 
     fun resizeImages(scale: Int, page: PageView): AppResult<Unit, DomainError> {
