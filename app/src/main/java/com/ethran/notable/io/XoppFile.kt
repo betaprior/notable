@@ -187,7 +187,12 @@ class XoppFile @Inject constructor(
             for (stroke in strokes) {
                 if (stroke.points.size < 3) continue
 
-                writer.write("<stroke tool=\"")
+                // Stable per-stroke id (shared identity across the file boundary):
+                // lets xournal match edits/deletes to committed strokes. Backward
+                // compatible -- other xournal readers ignore the unknown attribute.
+                writer.write("<stroke id=\"")
+                writer.write(escapeXml(stroke.id))
+                writer.write("\" tool=\"")
                 // xopp keeps the Notable pen name (round-trips); xoj must use a
                 // classic-xournal tool name (pen/highlighter).
                 writer.write(
@@ -595,6 +600,9 @@ class XoppFile @Inject constructor(
         page: Page,
         state: ParseState
     ): Stroke? {
+        // Preserve the file's stroke id (shared identity) if present; legacy
+        // files without one get a fresh id minted here (stable on next export).
+        val strokeId = parser.getAttributeValue(null, "id")?.takeIf { it.isNotBlank() }
         val toolName = parser.getAttributeValue(null, "tool") ?: ""
         val colorString = parser.getAttributeValue(null, "color") ?: "black"
         val widthString = parser.getAttributeValue(null, "width") ?: "1"
@@ -656,6 +664,7 @@ class XoppFile @Inject constructor(
         boundingBox.inset(-strokeSize, -strokeSize)
 
         return Stroke(
+            id = strokeId ?: java.util.UUID.randomUUID().toString(),
             size = strokeSize,
             pen = Pen.fromString(toolName),
             pageId = page.id,
