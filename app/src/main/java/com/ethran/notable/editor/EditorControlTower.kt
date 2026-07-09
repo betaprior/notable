@@ -348,7 +348,20 @@ class EditorControlTower(
                 Operation.AddStroke(sel) // undo restores the original strokes (old ids + widths)
             )
         )
+        // Apply, then dismiss the selection and return to the drawing tool so the width
+        // takes effect immediately -- no extra tap-outside needed.
+        val label = com.ethran.notable.editor.utils.widthLabel(width)
+        deselectAndRestoreTool()
         scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
+        showHint("Stroke width set to $label")
+    }
+
+    /** Commit any pending move, clear the selection, and restore the pre-lasso tool. */
+    private fun deselectAndRestoreTool() {
+        applySelectionDisplace()                 // no-op rewrite is skipped when unmoved
+        viewModel.selectionState.reset()
+        viewModel.onToolbarAction(ToolbarAction.ChangeMode(modeBeforeLasso))
+        setIsDrawing(true)
     }
 
     /**
@@ -370,10 +383,7 @@ class EditorControlTower(
         )
         // Deselect and return to the drawing tool so the user can immediately draw
         // with the picked-up width -- no extra tap-outside needed.
-        applySelectionDisplace()                 // commit any pending move (no-op here)
-        viewModel.selectionState.reset()
-        viewModel.onToolbarAction(ToolbarAction.ChangeMode(modeBeforeLasso))
-        setIsDrawing(true)
+        deselectAndRestoreTool()
         scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
         showHint("Pen width set to $label")
     }

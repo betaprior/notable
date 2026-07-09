@@ -265,12 +265,17 @@ class SelectionState {
                 offsetStroke(it, offset = offset.toOffset())
             }
 
-            // Move mints fresh ids (immutable edit); Paste keeps the displaced ids.
-            val committedStrokes = if (placementMode == PlacementMode.Move) {
-                page.updateStrokes(displacedStrokes)
-            } else {
-                page.addStrokes(displacedStrokes)
-                displacedStrokes
+            // Move WITH an actual displacement mints fresh ids (immutable edit). A Move
+            // with zero offset (select -> deselect, or get/set-width) leaves the strokes
+            // exactly as they are -- skip the rewrite so we don't churn ids or re-stream
+            // unchanged strokes. Paste always adds the displaced copies.
+            val committedStrokes = when {
+                placementMode == PlacementMode.Paste -> {
+                    page.addStrokes(displacedStrokes)
+                    displacedStrokes
+                }
+                offset.x != 0 || offset.y != 0 -> page.updateStrokes(displacedStrokes)
+                else -> selectedStrokesCopy
             }
 
             if (offset.x != 0 || offset.y != 0 || placementMode == PlacementMode.Paste) {
