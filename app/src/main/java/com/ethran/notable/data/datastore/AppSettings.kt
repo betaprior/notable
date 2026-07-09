@@ -49,6 +49,9 @@ data class AppSettings(
     val quickNavPages: List<String> = listOf(),
     val neoTools: Boolean = false,
     val scribbleToEraseEnabled: Boolean = false,
+    // Strict lasso: select only strokes FULLY enclosed by the lasso (vs. the default
+    // "loose" behaviour where any stroke the lasso path touches is selected).
+    val strictLassoSelection: Boolean = false,
     val toolbarPosition: Position = Position.Top,
     val smoothScroll: Boolean = true,
     val continuousZoom: Boolean = false,

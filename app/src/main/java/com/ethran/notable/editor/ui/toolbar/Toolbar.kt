@@ -291,11 +291,13 @@ fun ToolbarContent(
 
                     VerticalDivider()
 
-                    ToolbarButton(
+                    LassoToolbarButton(
                         isSelected = uiState.mode == Mode.Select,
                         onSelect = { onAction(ToolbarAction.ChangeMode(Mode.Select)) },
-                        iconId = R.drawable.lasso,
-                        contentDescription = "lasso"
+                        strict = GlobalAppSettings.current.strictLassoSelection,
+                        onStrictChange = { onAction(ToolbarAction.SetStrictLasso(it)) },
+                        isMenuOpen = uiState.isLassoMenuOpen,
+                        onMenuOpenChange = { onAction(ToolbarAction.ToggleLassoMenu(it)) },
                     )
 
                     VerticalDivider()

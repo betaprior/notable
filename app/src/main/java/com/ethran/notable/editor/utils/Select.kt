@@ -7,6 +7,7 @@ import android.graphics.RectF
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.toOffset
 import androidx.core.graphics.createBitmap
+import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.data.db.Image
 import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.editor.EditorViewModel
@@ -32,7 +33,10 @@ enum class SelectPointPosition {
 
 private val log = ShipBook.getLogger("Select")
 
-fun selectStrokesFromPath(strokes: List<Stroke>, path: Path): List<Stroke> {
+// [strict] selects only strokes fully enclosed by the lasso (every point inside);
+// the default (false) selects any stroke the lasso path touches. Erase callers use
+// the default -- only the lasso-selection paths pass strict per the user setting.
+fun selectStrokesFromPath(strokes: List<Stroke>, path: Path, strict: Boolean = false): List<Stroke> {
     val bounds = RectF()
     path.computeBounds(bounds, true)
 
@@ -41,15 +45,14 @@ fun selectStrokesFromPath(strokes: List<Stroke>, path: Path): List<Stroke> {
     translatedPath.offset(0f, -bounds.top)
     val region = pathToRegion(translatedPath)
 
+    fun inside(point: com.ethran.notable.data.db.StrokePoint) =
+        region.contains(point.x.toInt(), (point.y - bounds.top).toInt())
+
     return strokes.filter {
         strokeBounds(it).intersect(bounds)
     }.filter {
-        it.points.any { point ->
-            region.contains(
-                point.x.toInt(),
-                (point.y - bounds.top).toInt()
-            )
-        }
+        if (strict) it.points.all { point -> inside(point) }
+        else it.points.any { point -> inside(point) }
     }
 }
 
@@ -191,7 +194,10 @@ fun handleSelectContinuous(
     val selectionPath = pointsToPath(localPoints)
     selectionPath.close()
 
-    val selectedStrokes = selectStrokesFromPath(page.pageDataManager.getStrokes(pid), selectionPath)
+    val selectedStrokes = selectStrokesFromPath(
+        page.pageDataManager.getStrokes(pid), selectionPath,
+        strict = GlobalAppSettings.current.strictLassoSelection
+    )
     val selectedImages = selectImagesFromPath(page.pageDataManager.getImages(pid), selectionPath)
     if (selectedStrokes.isEmpty() && selectedImages.isEmpty()) return
 
@@ -314,7 +320,10 @@ fun handleSelect(
         selectionPath.close()
 
         // get the selected strokes and images
-        val selectedStrokes = selectStrokesFromPath(page.strokes, selectionPath)
+        val selectedStrokes = selectStrokesFromPath(
+            page.strokes, selectionPath,
+            strict = GlobalAppSettings.current.strictLassoSelection
+        )
         val selectedImages = selectImagesFromPath(page.images, selectionPath)
 
         if (selectedStrokes.isEmpty() && selectedImages.isEmpty()) return

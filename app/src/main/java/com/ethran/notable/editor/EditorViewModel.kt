@@ -104,10 +104,12 @@ data class ToolbarUiState(
     val continuousPageIds: List<String> = emptyList(),
     // last width entered via the "C" custom stroke-width chip (pre-fills the modal)
     val lastCustomWidth: Float = 15f,
+    // Lasso tool submenu (loose / strict selection) open.
+    val isLassoMenuOpen: Boolean = false,
 ) {
     val isDrawingAllowed: Boolean
         get() = !isSelectionActive && !pastePending &&
-                !(isMenuOpen || isStrokeSelectionOpen || isBackgroundSelectorModalOpen)
+                !(isMenuOpen || isStrokeSelectionOpen || isBackgroundSelectorModalOpen || isLassoMenuOpen)
                 && !isQuickNavOpen
 }
 
@@ -124,6 +126,8 @@ sealed class ToolbarAction {
     data class ChangeEraser(val eraser: Eraser) : ToolbarAction()
     object ToggleMenu : ToolbarAction()
     data class ToggleEraserManu(val isOpen: Boolean) : ToolbarAction()
+    data class ToggleLassoMenu(val isOpen: Boolean) : ToolbarAction()
+    data class SetStrictLasso(val strict: Boolean) : ToolbarAction()
     data class ToggleBackgroundSelector(val isOpen: Boolean) : ToolbarAction()
     data class ToggleScribbleToErase(val enabled: Boolean) : ToolbarAction()
 
@@ -334,6 +338,19 @@ class EditorViewModel @Inject constructor(
             is ToolbarAction.ToggleEraserManu -> {
                 _toolbarState.update { it.copy(isStrokeSelectionOpen = action.isOpen) }
 //                updateDrawingState() // on focus change is doing this
+            }
+
+            is ToolbarAction.ToggleLassoMenu -> {
+                _toolbarState.update { it.copy(isLassoMenuOpen = action.isOpen) }
+                updateDrawingState()
+            }
+
+            is ToolbarAction.SetStrictLasso -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    appRepository.kvProxy.setAppSettings(
+                        GlobalAppSettings.current.copy(strictLassoSelection = action.strict)
+                    )
+                }
             }
 
             is ToolbarAction.ToggleBackgroundSelector -> {
