@@ -165,6 +165,8 @@ fun EditorView(
                     CanvasCommand.ZoomFitWidth -> editorControlTower.zoomFitWidth()
                     is CanvasCommand.SetSelectionWidth ->
                         editorControlTower.setSelectionStrokeWidth(command.width, command.isCustom)
+                    is CanvasCommand.ShiftContinuousViewport ->
+                        page.shiftContinuousViewportByPage(command.dir)
                     CanvasCommand.ClearAllStrokes -> {
                         CanvasEventBus.clearPageSignal.emit(Unit)
                         snackManager.displaySnack(
@@ -210,6 +212,29 @@ fun EditorView(
         // once known -- drives fixed-height rendering and the scroll boundary.
         LaunchedEffect(toolbarState.fixedPageHeightPt) {
             page.fixedPageHeightPt = toolbarState.fixedPageHeightPt
+        }
+        // Continuous view of discrete pages (gated by continuousScroll). Push the
+        // mode + page list; redraw when they change. NO scroll reset here (that
+        // would fight the per-page viewport shift on nav / a page create).
+        LaunchedEffect(toolbarState.continuousScroll, toolbarState.continuousPageIds) {
+            page.continuousScroll = toolbarState.continuousScroll
+            page.continuousPageIds = toolbarState.continuousPageIds
+            if (page.isContinuous) CanvasEventBus.forceUpdate.emit(null)
+        }
+        // Position the viewport at the open page ONCE when continuous turns on.
+        LaunchedEffect(toolbarState.continuousScroll) {
+            if (page.isContinuous) {
+                val stride = page.continuousPageStridePx ?: 0f
+                page.continuousScrollY = page.currentPageNumber.coerceAtLeast(0) * stride
+                page.continuousCurrentPageIndex.value = page.computeMajorityPageIndex()
+                CanvasEventBus.forceUpdate.emit(null)
+            }
+        }
+        // Toolbar page indicator follows the majority page in the viewport.
+        LaunchedEffect(page) {
+            page.continuousCurrentPageIndex.collect { idx ->
+                if (page.isContinuous) viewModel.onContinuousPageIndex(idx)
+            }
         }
 
         // Observe pageId changes from ViewModel state for navigation

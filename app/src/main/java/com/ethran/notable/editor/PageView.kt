@@ -32,7 +32,9 @@ import com.ethran.notable.editor.canvas.CanvasEventBus
 import com.ethran.notable.editor.canvas.CanvasEventBus.drawingInProgress
 import com.ethran.notable.editor.canvas.CanvasEventBus.waitForDrawing
 import com.ethran.notable.editor.drawing.drawBg
+import com.ethran.notable.editor.drawing.drawImage
 import com.ethran.notable.editor.drawing.drawOnCanvasFromPage
+import com.ethran.notable.editor.drawing.drawStroke
 import com.ethran.notable.editor.utils.div
 import com.ethran.notable.editor.utils.divideStrokesFromCut
 import com.ethran.notable.editor.utils.loadHQPagePreview
@@ -169,6 +171,86 @@ class PageView(
             pageDataManager.setPageHeight(currentPageId, value)
         }
 
+    // --- Continuous view of discrete pages (xournal-style) ---------------------
+    // Pushed from EditorView like fixedPageHeightPt. Only meaningful when
+    // paginated. When off, snap mode is unchanged. The helpers below are pure
+    // (doc-absolute Y over the page+gap stack) and safe to reference anywhere;
+    // the render/scroll swap that USES them is a later (on-device) phase, gated
+    // by isContinuous so legacy + snap paths are untouched until then.
+    @Volatile
+    var continuousScroll: Boolean = false
+
+    /** Doc-absolute scroll position (page coords, top of the viewport) in
+     *  continuous mode. Distinct from the per-page [scroll]. */
+    @Volatile
+    var continuousScrollY: Float = 0f
+
+    /** Notebook-level horizontal pan (page coords) in continuous mode. Kept off
+     *  the per-page [scroll] so it survives the current-page anchor advancing. */
+    @Volatile
+    var continuousScrollX: Float = 0f
+
+    /** Ordered pageIds of the notebook, pushed from EditorView -- lets the
+     *  compositor map a page index to its (cached) strokes synchronously. */
+    @Volatile
+    var continuousPageIds: List<String> = emptyList()
+
+    private val continuousPageLabelPaint = android.graphics.Paint().apply {
+        color = android.graphics.Color.rgb(0x99, 0x99, 0x99)
+        textSize = 28f
+        isAntiAlias = true
+    }
+
+    /** Index of the page occupying the MAJORITY of the viewport (drives the
+     *  toolbar page indicator). Observed by EditorView. */
+    val continuousCurrentPageIndex = MutableStateFlow(0)
+
+    /** Page index with the largest overlap with the current viewport -- cheap
+     *  (loops only the 1-3 visible pages). */
+    fun computeMajorityPageIndex(): Int {
+        val stride = continuousPageStridePx ?: return 0
+        val pageH = paginatedPageHeightPx ?: return 0
+        val top = continuousScrollY
+        val bottom = top + viewHeight / zoomLevel.value
+        var bestIdx = docYToPageIndex(top)
+        var bestOverlap = -1f
+        for (idx in docYToPageIndex(top)..docYToPageIndex(bottom)) {
+            val pTop = idx * stride
+            val overlap = minOf(bottom, pTop + pageH) - maxOf(top, pTop)
+            if (overlap > bestOverlap) { bestOverlap = overlap; bestIdx = idx }
+        }
+        return bestIdx.coerceIn(0, (continuousPageIds.size - 1).coerceAtLeast(0))
+    }
+
+    /** True when this notebook renders as a continuous stack of discrete pages. */
+    val isContinuous: Boolean get() = isPaginated && continuousScroll
+
+    /** Gap between stacked pages, in page (unzoomed) coords -- scaled like page
+     *  height. ~24pt to echo xournal's continuous-view separation (tune later). */
+    val continuousPageGapPx: Float get() = 24f * SCREEN_WIDTH / pageWidthPt
+
+    /** Vertical stride from one page's top to the next (page height + gap). */
+    val continuousPageStridePx: Float?
+        get() = paginatedPageHeightPx?.let { it + continuousPageGapPx }
+
+    /** Doc-absolute y of page [index]'s top, in page coords. */
+    fun pageTopDocY(index: Int): Float = continuousPageStridePx?.let { index * it } ?: 0f
+
+    /** Total document height across [pageCount] pages + gaps (page coords), or
+     *  null when not continuous. Trailing gap after the last page is excluded. */
+    fun totalDocHeightPx(pageCount: Int): Float? =
+        continuousPageStridePx?.let { stride -> maxOf(0f, pageCount * stride - continuousPageGapPx) }
+
+    /** Page index whose band contains doc-absolute [docY] (a point in a gap maps
+     *  to the page above it -- the gap is dead space for input). */
+    fun docYToPageIndex(docY: Float): Int =
+        continuousPageStridePx?.let { (docY / it).toInt().coerceAtLeast(0) } ?: 0
+
+    /** Page-local y for doc-absolute [docY] within its page (negative => in the
+     *  gap below that page). */
+    fun docYToLocalY(docY: Float): Float =
+        continuousPageStridePx?.let { docY - docYToPageIndex(docY) * it } ?: docY
+
 
 //    private var dbStrokes = appRepository.strokeRepository
 //    private var dbImages = appRepository.imageRepository
@@ -254,6 +336,17 @@ class PageView(
         log.d("changePage Entry: $oldId -> $newPageId (keepZoom=$keepZoom)")
 
         coroutineScope.launch(Dispatchers.IO) {
+            if (isContinuous) {
+                // Compositor owns the zoom-scaled viewport canvas. A page turn here
+                // is only a data/current-page update (the ShiftContinuousViewport
+                // command already moved the viewport). Recreating/swapping a
+                // single-page bitmap would drop the zoom scale -> partial render.
+                pageDataManager.setPage(newPageId)
+                zoomLevel.value = keepZoom
+                pageDataManager.setPageZoom(currentPageId, keepZoom)
+                ensureContinuousPagesLoaded()
+                return@launch
+            }
             pageDataManager.onExit(oldId, windowedBitmap, coroutineScope)
             pageDataManager.setPage(newPageId)
             zoomLevel.value = keepZoom
@@ -371,6 +464,99 @@ class PageView(
         inkStream.streamCompleteStrokes(strokesToAdd, streamPageIndex())
 
 //        persistBitmapDebounced()
+    }
+
+    /** Continuous view: commit [strokesToAdd] to a SPECIFIC page (the one under the
+     *  pen), not the current page. Points must already be that page's LOCAL coords
+     *  and each stroke's pageId must be [pageId]. Streams to [pageIndex] and
+     *  repaints the viewport. */
+    fun addStrokesToPage(pageId: String, pageIndex: Int, strokesToAdd: List<Stroke>) {
+        pageDataManager.setStrokes(pageId, pageDataManager.getStrokes(pageId) + strokesToAdd)
+        saveStrokesToPersistLayer(strokesToAdd)          // DB row keyed by stroke.pageId
+        pageDataManager.indexStrokes(coroutineScope, pageId)
+        inkStream.streamCompleteStrokes(strokesToAdd, pageIndex)
+        // INCREMENTAL draw (matches the snap path -- NOT a full forceUpdate, which
+        // recomposites the whole viewport + does a full e-ink refresh per stroke =>
+        // lag). Draw just the new strokes onto the bitmap at their page position,
+        // clipped to the page; the firmware raw-ink already shows them live and the
+        // bitmap catches up silently on the next settle.
+        val stride = continuousPageStridePx ?: return
+        val pageH = paginatedPageHeightPx ?: return
+        val zoom = zoomLevel.value
+        val yOff = pageIndex * stride - continuousScrollY
+        windowedCanvas.save()
+        windowedCanvas.clipRect(0f, yOff, viewWidth / zoom, yOff + pageH)
+        val off = Offset(-continuousScrollX, yOff)
+        strokesToAdd.forEach { drawStroke(windowedCanvas, it, off) }
+        windowedCanvas.restore()
+    }
+
+    // --- Continuous-view undo/redo: operate by each stroke's OWN pageId (not the
+    // current page), since strokes can live on any page. Full repaint at the end
+    // (undo/redo is infrequent, so a compositor redraw is fine). ---
+
+    /** Re-add [strokes] to their own pages (undo of a delete / redo of an add). */
+    fun addStrokesToOwnPages(strokes: List<Stroke>) {
+        strokes.groupBy { it.pageId }.forEach { (pid, group) ->
+            pageDataManager.setStrokes(pid, pageDataManager.getStrokes(pid) + group)
+            saveStrokesToPersistLayer(group)
+            pageDataManager.indexStrokes(coroutineScope, pid)
+            val idx = continuousPageIds.indexOf(pid)
+            if (idx >= 0) inkStream.streamCompleteStrokes(group, idx)
+        }
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
+    }
+
+    /** Remove strokes [ids] from their own pages; returns the removed strokes so
+     *  the inverse (re-add) can be recorded. */
+    fun removeStrokesFromOwnPages(ids: List<String>): List<Stroke> {
+        val idSet = ids.toSet()
+        val removed = continuousPageIds.flatMap { pid ->
+            pageDataManager.getStrokes(pid).filter { it.id in idSet }
+        }
+        removed.groupBy { it.pageId }.forEach { (pid, group) ->
+            pageDataManager.setStrokes(pid, pageDataManager.getStrokes(pid).filter { it.id !in idSet })
+            pageDataManager.indexStrokes(coroutineScope, pid)
+        }
+        removeStrokesFromPersistLayer(ids)
+        inkStream.deleteStrokes(ids)
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
+        return removed
+    }
+
+    /** Re-add [imagesToAdd] to their own pages (undo/redo). Images aren't streamed. */
+    fun addImagesToOwnPages(imagesToAdd: List<Image>) {
+        imagesToAdd.groupBy { it.pageId }.forEach { (pid, group) ->
+            pageDataManager.setImages(pid, pageDataManager.getImages(pid) + group)
+            saveImagesToPersistLayer(group)
+        }
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
+    }
+
+    /** Remove images [ids] from their own pages; returns them for the inverse op. */
+    fun removeImagesFromOwnPages(ids: List<String>): List<Image> {
+        val idSet = ids.toSet()
+        val removed = continuousPageIds.flatMap { pid ->
+            pageDataManager.getImages(pid).filter { it.id in idSet }
+        }
+        removed.groupBy { it.pageId }.forEach { (pid, _) ->
+            pageDataManager.setImages(pid, pageDataManager.getImages(pid).filter { it.id !in idSet })
+        }
+        removeImagesFromPersistLayer(ids)
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
+        return removed
+    }
+
+    /** Continuous view: remove strokes from a SPECIFIC page (under the eraser),
+     *  not the current page. Streams the deletes; the caller repaints. */
+    fun removeStrokesFromPage(pageId: String, strokeIds: List<String>) {
+        if (strokeIds.isEmpty()) return
+        pageDataManager.setStrokes(
+            pageId, pageDataManager.getStrokes(pageId).filter { it.id !in strokeIds }
+        )
+        removeStrokesFromPersistLayer(strokeIds)   // DB delete by id
+        pageDataManager.indexStrokes(coroutineScope, pageId)
+        inkStream.deleteStrokes(strokeIds)
     }
 
     fun applyPageCutOffset(cutLine: List<SimplePointF>, offset: Offset): PageCutMoveResult? {
@@ -569,6 +755,12 @@ class PageView(
         canvas: Canvas? = null
     ) {
         val activeCanvas = canvas ?: windowedCanvas
+        if (isContinuous) {
+            // Continuous view redraws the whole viewport from the page stack
+            // (v1: full redraw, not incremental). Selection/ignored ids unused.
+            drawContinuousViewport(activeCanvas)
+            return
+        }
         val pageArea = toPageCoordinates(screenArea)
         val pageAreaWithoutScroll = removeScroll(pageArea)
         drawOnCanvasFromPage(
@@ -586,6 +778,125 @@ class PageView(
                 )
             )
         }
+    }
+
+    /**
+     * Continuous view of discrete pages: render every page intersecting the
+     * viewport, each clipped to its own rect (so a stroke never visually crosses
+     * a boundary), separated by a gap. Everything is in page coords -- the canvas
+     * is already zoom-scaled. Pages whose strokes aren't cached yet draw blank
+     * until scrolled to (the load kicks in via cacheNeighbors).
+     */
+    fun drawContinuousViewport(canvas: Canvas) {
+        val stride = continuousPageStridePx ?: return
+        val pageH = paginatedPageHeightPx ?: return
+        val ids = continuousPageIds
+        val zoom = zoomLevel.value
+        val viewWpage = viewWidth / zoom
+        val viewHpage = viewHeight / zoom
+        val top = continuousScrollY
+
+        // Inter-page gap / background (light grey), then each page on top.
+        canvas.drawColor(android.graphics.Color.rgb(0xDD, 0xDD, 0xDD))
+
+        // Background is notebook-wide for Native ruling (the common case); use the
+        // current page's type/name for all pages. (Per-page PDF/image backgrounds
+        // are a TODO -- they fall through to white here.)
+        val bgType = pageDataManager.getBackgroundType() ?: BackgroundType.Native
+        val bgName = pageDataManager.getBackgroundName()
+
+        val firstIdx = docYToPageIndex(top)
+        val lastIdx = docYToPageIndex(top + viewHpage)
+        for (idx in firstIdx..lastIdx) {
+            if (idx < 0 || idx >= ids.size) continue
+            val pageId = ids[idx]
+            val yOff = idx * stride - top // page-coord y of this page's top on screen
+            canvas.save()
+            canvas.clipRect(0f, yOff, viewWpage, yOff + pageH)
+            // Draw this page's background/ruling starting at its top (scroll=-yOff
+            // shifts the pattern down so line 0 + top margin land at the page top).
+            drawBg(
+                canvas = canvas,
+                backgroundType = bgType,
+                background = bgName,
+                // drawBg draws content at (pos - scroll): horizontal uses the pan
+                // offset (scroll.x, like the normal render + the strokes below);
+                // vertical uses -yOff to place this page's ruling at its top.
+                scroll = Offset(continuousScrollX, -yOff),
+                resourceBitmap = null,
+                scale = zoom,
+                repeat = false,
+                clipRect = null,
+                showPaginationGuide = false, // discrete pages: draw our own label
+            )
+            val off = Offset(-continuousScrollX, yOff)
+            // Images first, then strokes on top (matches the normal render path).
+            pageDataManager.getImages(pageId).forEach { image ->
+                drawImage(context, canvas, image, off)
+            }
+            pageDataManager.getStrokes(pageId).forEach { stroke ->
+                drawStroke(canvas, stroke, off)
+            }
+            // "Page N" label, top-left of the page.
+            canvas.drawText("Page ${idx + 1}", 24f - continuousScrollX, yOff + 40f, continuousPageLabelPaint)
+            canvas.restore()
+        }
+    }
+
+    /** Load any pages now in the viewport that aren't cached yet, then repaint --
+     *  so a page revealed by a scroll or a one-page shift fills in instead of
+     *  staying blank until the next interaction. */
+    fun ensureContinuousPagesLoaded() {
+        if (!isContinuous) return
+        val viewHpage = viewHeight / zoomLevel.value
+        val firstIdx = docYToPageIndex(continuousScrollY)
+        val lastIdx = docYToPageIndex(continuousScrollY + viewHpage)
+        val ids = continuousPageIds
+        coroutineScope.launch {
+            for (idx in firstIdx..lastIdx) {
+                ids.getOrNull(idx)?.let { pageDataManager.ensurePageLoaded(it) }
+            }
+            CanvasEventBus.forceUpdate.emit(null)
+        }
+    }
+
+    /** Scroll the continuous stack by [dragDelta] (screen px), clamped to the
+     *  document extent, and repaint the viewport. */
+    suspend fun continuousScrollBy(dragDelta: Offset) {
+        val zoom = zoomLevel.value
+        val viewHpage = viewHeight / zoom
+        val total = totalDocHeightPx(continuousPageIds.size) ?: return
+        val maxScrollY = maxOf(0f, total - viewHpage)
+        val newY = (continuousScrollY + dragDelta.y / zoom).coerceIn(0f, maxScrollY)
+        // Horizontal pan (relevant when zoomed in): shift the shared x offset that
+        // the compositor applies to backgrounds + strokes. Page fills the width at
+        // zoom 1, so the pan range is viewWidth*(1 - 1/zoom).
+        val maxScrollX = maxOf(0f, viewWidth - viewWidth / zoom)
+        val newX = (continuousScrollX + dragDelta.x / zoom).coerceIn(0f, maxScrollX)
+        if (newY == continuousScrollY && newX == continuousScrollX) return
+        continuousScrollY = newY
+        continuousScrollX = newX
+        continuousCurrentPageIndex.value = computeMajorityPageIndex()
+        waitForDrawingWithSnack()
+        CanvasEventBus.forceUpdate.emit(null)
+        ensureContinuousPagesLoaded()
+    }
+
+    /** Page-change in continuous mode: displace the viewport by exactly one page
+     *  stride (H+gap), preserving the relative position within the view AND the
+     *  zoom -- e.g. midway between pages 1&2 -> midway between 2&3; a zoomed region
+     *  of page 1 -> the same region of page 2. [dir] = +1 next, -1 previous. */
+    suspend fun shiftContinuousViewportByPage(dir: Int) {
+        val stride = continuousPageStridePx ?: return
+        val viewHpage = viewHeight / zoomLevel.value
+        val total = totalDocHeightPx(continuousPageIds.size) ?: return
+        val maxScroll = maxOf(0f, total - viewHpage)
+        val newY = (continuousScrollY + dir * stride).coerceIn(0f, maxScroll)
+        if (newY == continuousScrollY) return
+        continuousScrollY = newY
+        continuousCurrentPageIndex.value = computeMajorityPageIndex()
+        CanvasEventBus.forceUpdate.emit(null)
+        ensureContinuousPagesLoaded()
     }
 
     suspend fun simpleUpdateScroll(dragDelta: Offset) {

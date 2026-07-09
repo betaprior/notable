@@ -265,6 +265,11 @@ class EditorControlTower(
     }
 
     private suspend fun onPageScroll(dragDelta: Offset) {
+        // Continuous view: smooth scroll through the discrete-page stack, no snap.
+        if (page.isContinuous) {
+            page.continuousScrollBy(dragDelta)
+            return
+        }
         // Paginated ("snap") mode: a vertical scroll that would cross the fixed
         // page boundary becomes a page change instead -- scroll == swipe. The
         // page-position decision is a pure function of scroll vs. the page's

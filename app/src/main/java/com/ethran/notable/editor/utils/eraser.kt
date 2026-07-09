@@ -85,7 +85,10 @@ fun handleScribbleToErase(
     history: History,
     pen: Pen,
     currentLastStrokeEndTime: Long,
-    firstPointTime: Long
+    firstPointTime: Long,
+    // Continuous view: search/remove on this page (the one under the scribble),
+    // with touchPoints already in that page's local coords. The caller repaints.
+    targetPageId: String? = null,
 ): Rect? {
     if (pen == Pen.MARKER) return null // do not erase with highlighter
     if (!GlobalAppSettings.current.scribbleToEraseEnabled) return null // scribble to erase is disabled
@@ -119,7 +122,9 @@ fun handleScribbleToErase(
     val path = pointsToPath(touchPoints.map { SimplePointF(it.x, it.y) })
     val outPath = Path()
     Paint().apply { this.strokeWidth = strokeSizeForDetection }.getFillPath(path, outPath)
-    val candidateStrokes = selectStrokesFromPath(page.strokes, outPath)
+    val searchStrokes =
+        if (targetPageId != null) page.pageDataManager.getStrokes(targetPageId) else page.strokes
+    val candidateStrokes = selectStrokesFromPath(searchStrokes, outPath)
 
 
     // Filter intersecting strokes based on intersection ratio
@@ -129,6 +134,13 @@ fun handleScribbleToErase(
     // If strokes were found, remove them and update history
     if (deletedStrokes.isNotEmpty()) {
         val deletedStrokeIds = deletedStrokes.map { it.id }
+        if (targetPageId != null) {
+            // Continuous view: remove from the scribble's page; the caller repaints
+            // the viewport and commits the erase, so just signal that we erased.
+            page.removeStrokesFromPage(targetPageId, deletedStrokeIds)
+            history.addOperationsToHistory(listOf(Operation.AddStroke(deletedStrokes)))
+            return Rect()
+        }
         page.removeStrokes(deletedStrokeIds)
         history.addOperationsToHistory(listOf(Operation.AddStroke(deletedStrokes)))
         // Return the erased region in SCREEN coordinates (mirrors handleErase). The caller
@@ -197,4 +209,31 @@ fun cleanAllStrokes(
     val effectedArea = page.toScreenCoordinates(strokeBounds(deletedStrokes))
     page.drawAreaScreenCoordinates(screenArea = effectedArea)
     return effectedArea
+}
+/**
+ * Continuous view: erase against a SPECIFIC page's strokes, given eraser
+ * [localPoints] already in that page's local coords. Removes from that page and
+ * records history. Returns true if anything was erased (caller repaints).
+ */
+fun handleEraseOnPage(
+    page: PageView, pageId: String, history: History,
+    localPoints: List<SimplePointF>, eraser: Eraser
+): Boolean {
+    val paint = Paint().apply {
+        strokeWidth = 30f
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        isAntiAlias = true
+    }
+    val path = pointsToPath(localPoints)
+    var outPath = Path()
+    if (eraser == Eraser.SELECT) { path.close(); outPath = path }
+    if (eraser == Eraser.PEN) { paint.getFillPath(path, outPath) }
+
+    val deleted = selectStrokesFromPath(page.pageDataManager.getStrokes(pageId), outPath)
+    if (deleted.isEmpty()) return false
+    page.removeStrokesFromPage(pageId, deleted.map { it.id })
+    history.addOperationsToHistory(listOf(Operation.AddStroke(deleted)))
+    return true
 }

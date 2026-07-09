@@ -353,6 +353,10 @@ fun drawBg(
     scale: Float = 1f,          // When exporting, we change scale of canvas. therefore canvas.width/height is scaled
     repeat: Boolean = false,    // for repeating image
     clipRect: Rect? = null,     // before the scaling
+    // The PDF-pagination guide ("Subpage N" break lines) is for legacy growable
+    // pages; the continuous compositor draws real discrete pages and its own
+    // "Page N" label, so it suppresses this.
+    showPaginationGuide: Boolean = true,
 ) {
 
     log.v("Loading the background")
@@ -394,7 +398,7 @@ fun drawBg(
     }
     drawMargin(canvas, scroll, scale)
 
-    if (GlobalAppSettings.current.visualizePdfPagination) {
+    if (showPaginationGuide && GlobalAppSettings.current.visualizePdfPagination) {
         drawPaginationLine(canvas, scroll, scale)
     }
     if (clipRect != null) {

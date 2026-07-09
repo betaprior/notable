@@ -102,5 +102,12 @@ fun GeneralSettings(
             onToggle = { isChecked ->
                 onSettingsChange(settings.copy(visualizePdfPagination = isChecked))
             })
+
+        SettingToggleRow(
+            label = "Continuous view of paginated notebooks (experimental)",
+            value = settings.continuousScrollByDefault,
+            onToggle = { isChecked ->
+                onSettingsChange(settings.copy(continuousScrollByDefault = isChecked))
+            })
     }
 }

@@ -93,26 +93,38 @@ class History @AssistedInject constructor(
     private fun treatOperation(operation: Operation): Pair<Operation, Rect> {
         when (operation) {
             is Operation.AddStroke -> {
-                pageModel.addStrokes(operation.strokes)
+                // Continuous view: re-add to each stroke's OWN page, not the current
+                // page (the stroke may live on a non-anchor page).
+                if (pageModel.isContinuous) pageModel.addStrokesToOwnPages(operation.strokes)
+                else pageModel.addStrokes(operation.strokes)
                 return Operation.DeleteStroke(strokeIds = operation.strokes.map { it.id }) to strokeBounds(
                     operation.strokes
                 )
             }
 
             is Operation.DeleteStroke -> {
+                if (pageModel.isContinuous) {
+                    val strokes = pageModel.removeStrokesFromOwnPages(operation.strokeIds)
+                    return Operation.AddStroke(strokes = strokes) to strokeBounds(strokes)
+                }
                 val strokes = pageModel.getStrokes(operation.strokeIds).filterNotNull()
                 pageModel.removeStrokes(operation.strokeIds)
                 return Operation.AddStroke(strokes = strokes) to strokeBounds(strokes)
             }
 
             is Operation.AddImage -> {
-                pageModel.addImage(operation.images)
+                if (pageModel.isContinuous) pageModel.addImagesToOwnPages(operation.images)
+                else pageModel.addImage(operation.images)
                 return Operation.DeleteImage(imageIds = operation.images.map { it.id }) to imageBoundsInt(
                     operation.images
                 )
             }
 
             is Operation.DeleteImage -> {
+                if (pageModel.isContinuous) {
+                    val images = pageModel.removeImagesFromOwnPages(operation.imageIds)
+                    return Operation.AddImage(images = images) to imageBoundsInt(images)
+                }
                 val images = pageModel.getImages(operation.imageIds).filterNotNull()
                 pageModel.removeImages(operation.imageIds)
                 return Operation.AddImage(images = images) to imageBoundsInt(images)

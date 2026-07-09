@@ -294,6 +294,13 @@ class PageDataManager @Inject constructor(
         }
     }
 
+    /** Load [pageId]'s data and suspend until it's ready (idempotent: returns
+     *  immediately if already loaded). Used by the continuous-view compositor to
+     *  fill in pages that scroll/nav brings into view. */
+    suspend fun ensurePageLoaded(pageId: String) {
+        getOrStartLoadingJob(pageId, pageFromDb?.notebookId)?.join()
+    }
+
     private suspend fun preLoadBackground(pageId: String) {
         val pageDataFromDb = appRepository.pageRepository.getById(pageId)
         if (pageDataFromDb == null) {

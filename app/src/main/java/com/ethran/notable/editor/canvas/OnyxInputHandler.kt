@@ -1,5 +1,6 @@
 package com.ethran.notable.editor.canvas
 
+import androidx.compose.ui.geometry.Offset
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.RectF
@@ -18,8 +19,10 @@ import com.ethran.notable.editor.utils.copyInput
 import com.ethran.notable.editor.utils.copyInputToSimplePointF
 import com.ethran.notable.editor.utils.enableNativeEraser
 import com.ethran.notable.editor.utils.getModifiedStrokeEndpoints
+import com.ethran.notable.data.model.SimplePointF
 import com.ethran.notable.editor.utils.handleDraw
 import com.ethran.notable.editor.utils.handleErase
+import com.ethran.notable.editor.utils.handleEraseOnPage
 import com.ethran.notable.editor.utils.handleScribbleToErase
 import com.ethran.notable.editor.utils.handleSelect
 import com.ethran.notable.editor.utils.onSurfaceInit
@@ -107,7 +110,15 @@ class OnyxInputHandler(
             // across the boundary -- a known deferred corner case).
             val absY = absYPt(p1)
             val vpage: Int
-            if (page.isPaginated) {
+            if (page.isContinuous) {
+                // Continuous view: the pen's page is the band under its START
+                // point (Phase B confines the stroke to that page). Subtract the
+                // page top so streamed y is page-local, matching the committed
+                // stroke -> live + commit agree from the first datagram.
+                val docY = (p1?.y ?: 0f) / page.zoomLevel.value + page.continuousScrollY
+                vpage = page.docYToPageIndex(docY)
+                strokePageOffsetPt = page.pageTopDocY(vpage) * xojScale
+            } else if (page.isPaginated) {
                 // Paginated notebook: each Notable page IS one xournal page, and
                 // stroke y is already page-local (0..pageHeight). Use the page
                 // index directly and don't offset y.
@@ -309,12 +320,36 @@ class OnyxInputHandler(
                         log.d("lock obtained in ${lock - startTime} ms")
 
 
+                        val lineScroll = if (page.isContinuous)
+                            Offset(page.continuousScrollX, page.continuousScrollY) else page.scroll
                         val (startPoint, endPoint) = getModifiedStrokeEndpoints(
                             plist.points,
-                            page.scroll,
+                            lineScroll,
                             page.zoomLevel.value
                         )
                         val linePoints = transformToLine(startPoint, endPoint)
+
+                        if (page.isContinuous) {
+                            // Route the line to the page under its start point.
+                            val idx = page.docYToPageIndex(startPoint.y)
+                            val pid = page.continuousPageIds.getOrNull(idx)
+                            if (pid != null) {
+                                val pTop = page.pageTopDocY(idx)
+                                val local = linePoints.map { it.copy(y = it.y - pTop) }
+                                handleDraw(
+                                    drawCanvas.page, strokeHistoryBatch,
+                                    toolbarState.penSettings[toolbarState.pen.penName]!!.strokeSize,
+                                    toolbarState.penSettings[toolbarState.pen.penName]!!.color,
+                                    toolbarState.pen, local,
+                                    targetPageId = pid, targetPageIndex = idx,
+                                )
+                            }
+                            coroutineScope.launch(Dispatchers.Default) {
+                                drawCanvas.refreshManager.refreshUi(null)
+                                CanvasEventBus.commitHistorySignal.emit(Unit)
+                            }
+                            return@withLock
+                        }
 
                         handleDraw(
                             drawCanvas.page,
@@ -345,6 +380,56 @@ class OnyxInputHandler(
                     CanvasEventBus.drawingInProgress.withLock {
                         val lock = System.currentTimeMillis()
                         log.d("lock obtained in ${lock - startTime} ms")
+
+                        if (page.isContinuous) {
+                            // Continuous view: map the pen to doc-absolute coords,
+                            // route the stroke to the page under its START point in
+                            // that page's local frame. (Scribble-to-erase in
+                            // continuous is a later refinement.)
+                            val docPoints = copyInput(
+                                plist.points,
+                                Offset(page.continuousScrollX, page.continuousScrollY),
+                                page.zoomLevel.value
+                            )
+                            val idx = if (docPoints.isEmpty()) -1
+                            else page.docYToPageIndex(docPoints.first().y)
+                            val pid = page.continuousPageIds.getOrNull(idx)
+                            if (pid != null) {
+                                val pTop = page.pageTopDocY(idx)
+                                val localPoints = docPoints.map { it.copy(y = it.y - pTop) }
+                                val firstPointTime = plist.points.first().timestamp
+                                val erased = handleScribbleToErase(
+                                    page, localPoints, history, toolbarState.pen,
+                                    currentLastStrokeEndTime, firstPointTime, targetPageId = pid
+                                )
+                                if (erased != null) {
+                                    // Scribble erased strokes on that page: cancel the streamed
+                                    // preview, repaint the viewport, and clear the firmware ink.
+                                    pendingStrokeId?.let { inkStream.deleteStrokes(listOf(it)) }
+                                    page.drawAreaScreenCoordinates(Rect(0, 0, page.viewWidth, page.viewHeight))
+                                    val padding = 10
+                                    val bb = calculateBoundingBox(plist.points) { Pair(it.x, it.y) }.toRect()
+                                    val dirty = Rect(
+                                        bb.left - padding, bb.top - padding,
+                                        bb.right + padding, bb.bottom + padding
+                                    )
+                                    drawCanvas.refreshManager.commitErase(dirty, areaErase = true)
+                                } else {
+                                    handleDraw(
+                                        drawCanvas.page, strokeHistoryBatch,
+                                        toolbarState.penSettings[toolbarState.pen.penName]!!.strokeSize,
+                                        toolbarState.penSettings[toolbarState.pen.penName]!!.color,
+                                        toolbarState.pen, localPoints,
+                                        strokeId = pendingStrokeId,
+                                        targetPageId = pid, targetPageIndex = idx,
+                                    )
+                                }
+                            }
+                            coroutineScope.launch(Dispatchers.Default) {
+                                CanvasEventBus.commitHistorySignal.emit(Unit)
+                            }
+                            return@withLock
+                        }
 
                         val scaledPoints =
                             copyInput(plist.points, page.scroll, page.zoomLevel.value)
@@ -411,9 +496,12 @@ class OnyxInputHandler(
     // the stroke's virtual page) and stream it.
     private fun streamPoint(p: TouchPoint) {
         val zoom = page.zoomLevel.value
-        val scroll = page.scroll
-        val xojX = (p.x / zoom + scroll.x) * xojScale
-        val xojY = (p.y / zoom + scroll.y) * xojScale - strokePageOffsetPt
+        // Continuous view uses the notebook-level scroll (continuousScrollX/Y);
+        // other modes use the per-page scroll. strokePageOffsetPt makes y page-local.
+        val sx = if (page.isContinuous) page.continuousScrollX else page.scroll.x
+        val sy = if (page.isContinuous) page.continuousScrollY else page.scroll.y
+        val xojX = (p.x / zoom + sx) * xojScale
+        val xojY = (p.y / zoom + sy) * xojScale - strokePageOffsetPt
         val maxP = EpdController.getMaxTouchPressure().takeIf { it > 0f } ?: 4096f
         inkStream.strokePoint(xojX, xojY, (p.pressure / maxP).coerceIn(0f, 1f))
     }
@@ -422,6 +510,34 @@ class OnyxInputHandler(
         isErasing = false
 
         if (plist == null) return
+
+        if (page.isContinuous) {
+            // Erase per page the eraser touches: doc-absolute coords -> each page's
+            // local frame, run the erase against that page's strokes.
+            val docPoints = copyInputToSimplePointF(
+                plist.points,
+                Offset(page.continuousScrollX, page.continuousScrollY),
+                page.zoomLevel.value
+            )
+            var erased = false
+            if (docPoints.isNotEmpty()) {
+                val minY = docPoints.minOf { it.y }
+                val maxY = docPoints.maxOf { it.y }
+                for (idx in page.docYToPageIndex(minY)..page.docYToPageIndex(maxY)) {
+                    val pid = page.continuousPageIds.getOrNull(idx) ?: continue
+                    val pTop = page.pageTopDocY(idx)
+                    val local = docPoints.map { SimplePointF(it.x, it.y - pTop) }
+                    if (handleEraseOnPage(page, pid, history, local, toolbarState.eraser)) erased = true
+                }
+            }
+            if (erased) page.drawAreaScreenCoordinates(Rect(0, 0, page.viewWidth, page.viewHeight))
+            val padding = 10
+            val bb = calculateBoundingBox(plist.points) { Pair(it.x, it.y) }.toRect()
+            val dirty = Rect(bb.left - padding, bb.top - padding, bb.right + padding, bb.bottom + padding)
+            drawCanvas.refreshManager.commitErase(dirty, areaErase = toolbarState.eraser == Eraser.SELECT)
+            return
+        }
+
         val points = copyInputToSimplePointF(plist.points, page.scroll, page.zoomLevel.value)
 
         val padding = 10

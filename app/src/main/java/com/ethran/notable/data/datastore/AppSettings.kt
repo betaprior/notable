@@ -64,6 +64,14 @@ data class AppSettings(
     // untouched. Off => legacy growable pages with swipe-only navigation.
     val paginatedScrollByDefault: Boolean = true,
 
+    // Render paginated notebooks as a CONTINUOUS VIEW of discrete pages (xournal-
+    // style: pages stacked vertically with a gap, smooth scroll through the stack,
+    // strokes confined to one page) instead of snap (one page at a time). Only
+    // meaningful when a notebook is paginated (fixedPageHeightPt != null). Off =>
+    // snap mode (current behavior). Experimental; gated so legacy/snap are
+    // untouched when off. See xournal.org "Continuous view of discrete pages".
+    val continuousScrollByDefault: Boolean = true,
+
     // Gestures
     val doubleTapAction: GestureAction = GestureAction.Undo,
     val twoFingerTapAction: GestureAction = GestureAction.ToggleLasso,

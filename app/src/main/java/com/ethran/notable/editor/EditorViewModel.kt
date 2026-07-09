@@ -95,6 +95,10 @@ data class ToolbarUiState(
     val isQuickNavOpen: Boolean = false,
     // Paginated ("snap") page height for this notebook, or null in legacy mode.
     val fixedPageHeightPt: Int? = null,
+    // Render paginated notebooks as a continuous stack of discrete pages (gated).
+    val continuousScroll: Boolean = false,
+    // Ordered pageIds of the notebook (for the continuous-view compositor).
+    val continuousPageIds: List<String> = emptyList(),
     // last width entered via the "C" custom stroke-width chip (pre-fills the modal)
     val lastCustomWidth: Float = 15f,
 ) {
@@ -177,6 +181,9 @@ sealed class CanvasCommand {
     data class SetSelectionWidth(val width: Float, val isCustom: Boolean) : CanvasCommand()
     object ClearAllStrokes : CanvasCommand()
     object RefreshCanvas : CanvasCommand()
+
+    /** Continuous view: displace the viewport by one page (+1 next, -1 prev). */
+    data class ShiftContinuousViewport(val dir: Int) : CanvasCommand()
     data class CopyImageToCanvas(val uri: Uri) : CanvasCommand()
 }
 
@@ -599,7 +606,12 @@ class EditorViewModel @Inject constructor(
                 backgroundPath = page.background,
                 backgroundPageNumber = bgPageNumber,
                 hasDropboxLink = hasDropbox,
-                fixedPageHeightPt = fixedHeight
+                fixedPageHeightPt = fixedHeight,
+                // Continuous view only applies to paginated notebooks; global
+                // setting for now (per-notebook toggle later).
+                continuousScroll = fixedHeight != null &&
+                    com.ethran.notable.data.datastore.GlobalAppSettings.current.continuousScrollByDefault,
+                continuousPageIds = book?.pageIds ?: emptyList()
             )
         }
 
@@ -673,6 +685,13 @@ class EditorViewModel @Inject constructor(
     fun goToNextPage() {
         log.v("goToNextPage")
         viewModelScope.launch(Dispatchers.IO) {
+            // Continuous view: a page-nav is purely a one-page viewport shift; the
+            // majority-page computation drives the indicator (calling changePage
+            // here would re-run loadToolbarState and fight that indicator).
+            if (_toolbarState.value.continuousScroll) {
+                sendCanvasCommand(CanvasCommand.ShiftContinuousViewport(1))
+                return@launch
+            }
             getNextPageId()?.let { changePage(it) }
         }
     }
@@ -680,7 +699,30 @@ class EditorViewModel @Inject constructor(
     fun goToPreviousPage() {
         log.v("goToPreviousPage")
         viewModelScope.launch(Dispatchers.IO) {
+            if (_toolbarState.value.continuousScroll) {
+                sendCanvasCommand(CanvasCommand.ShiftContinuousViewport(-1))
+                return@launch
+            }
             getPreviousPageId()?.let { changePage(it) }
+        }
+    }
+
+    /** Continuous view: the majority page in the viewport is the current page. It
+     *  drives the toolbar indicator AND anchors the actual current page (openPageId
+     *  persistence, neighbor prefetch, per-page background, and the streaming/
+     *  drawing target). Called post-scroll by PageView when the majority changes. */
+    fun onContinuousPageIndex(index: Int) {
+        val ids = _toolbarState.value.continuousPageIds
+        val total = ids.size.coerceAtLeast(1)
+        _toolbarState.update {
+            it.copy(currentPageNumber = index, pageNumberInfo = "${index + 1}/$total")
+        }
+        val pageId = ids.getOrNull(index) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (pageId == pageDataManager.getCurrentPageId()) return@launch
+            pageDataManager.setPage(pageId)           // cheap: DB fetch + pointer
+            bookId?.let { appRepository.bookRepository.setOpenPageId(it, pageId) }
+            pageDataManager.cacheNeighbors()          // prefetch around the new anchor
         }
     }
 
