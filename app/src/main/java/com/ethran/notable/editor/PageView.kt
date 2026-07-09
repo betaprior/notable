@@ -940,6 +940,18 @@ class PageView(
         }
     }
 
+    /** Continuous view: snap the horizontal pan back to the left edge and clamp the
+     *  vertical scroll for [zoom] (its valid range depends on the zoom level). Used by
+     *  fit-width / reset / set-zoom, which otherwise only touch the unused per-page
+     *  [scroll] and leave the continuous pan offset. No-op in single-page mode. */
+    fun resetContinuousPanForZoom(zoom: Float) {
+        if (!isContinuous) return
+        continuousScrollX = 0f
+        val total = totalDocHeightPx(continuousPageIds.size) ?: return
+        val maxY = maxOf(0f, total - viewHeight / zoom)
+        continuousScrollY = continuousScrollY.coerceIn(0f, maxY)
+    }
+
     /** Load any pages now in the viewport that aren't cached yet, then repaint --
      *  so a page revealed by a scroll or a one-page shift fills in instead of
      *  staying blank until the next interaction. */

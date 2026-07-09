@@ -217,6 +217,7 @@ class EditorControlTower(
     fun resetZoomAndScroll() {
         scope.launch {
             page.scroll = Offset(0f, page.scroll.y)
+            page.resetContinuousPanForZoom(1f) // continuous: snap pan to left edge
             page.applyZoomAndRedraw(1f)
             // Request UI update
             CanvasEventBus.refreshUiImmediately.emit(Unit)
@@ -237,6 +238,7 @@ class EditorControlTower(
             val newScrollX = (pageX - cx / level).coerceAtLeast(0f)
             val newScrollY = (pageY - cy / level).coerceAtLeast(0f)
             page.scroll = Offset(newScrollX, newScrollY)
+            page.resetContinuousPanForZoom(level) // continuous: snap pan to left edge
             page.applyZoomAndRedraw(level)
             CanvasEventBus.refreshUiImmediately.emit(Unit)
         }
@@ -248,6 +250,7 @@ class EditorControlTower(
             val pageW = min(SCREEN_WIDTH, SCREEN_HEIGHT).toFloat()
             val fit = page.viewWidth / pageW
             page.scroll = Offset(0f, page.scroll.y)
+            page.resetContinuousPanForZoom(fit) // continuous: snap pan to left edge
             page.applyZoomAndRedraw(fit)
             CanvasEventBus.refreshUiImmediately.emit(Unit)
         }
