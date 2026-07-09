@@ -21,6 +21,7 @@ import com.ethran.notable.editor.utils.selectImagesAndStrokes
 import io.shipbook.shipbooksdk.ShipBook
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
@@ -31,6 +32,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Date
 import java.util.UUID
+
+// How long to wait after a stylus selection-drag pen-up (commit + refresh) before re-selecting
+// the moved strokes, so the pen-up refresh settles and the isDrawing transition propagates before
+// the panel re-enters selection/animation mode. Tunable if the re-select overlay lags or flickers.
+private const val STYLUS_RESELECT_SETTLE_MS = 200L
 
 class EditorControlTower(
     private val scope: CoroutineScope,
@@ -289,14 +295,40 @@ class EditorControlTower(
 
     // A stylus selection drag ended. Unlike a finger, the moving selection can't repaint live
     // under the pen (raw drawing is off during a selection), and the floating overlay won't show
-    // until something kicks the EPD. So finalize on lift the same way a tap-outside does: commit
-    // the displacement (writes the strokes into the page), clear the selection, and re-enable
-    // drawing -- which redraws the page and shows the result. Net effect: the selection snaps to
-    // its new position when the stylus lifts, no extra tap needed.
+    // until something kicks the EPD. So on lift we commit the displacement (writes the strokes
+    // into the page at the new spot, minting fresh ids + streaming) and then immediately
+    // RE-SELECT them there via the same page-region redraw the initial lasso uses -- which shows
+    // reliably after the pen lifts. Net effect: the strokes land at the new position and stay
+    // selected, so the pen (or a finger) can drag them again; a tap outside then dismisses.
     fun finishStylusSelectionDrag() {
-        applySelectionDisplace()
+        // The proven finish (same as a plain deselect): commit the move, clear the selection,
+        // return to drawing mode. reset()'s setAnimationMode(false) full refresh shows the
+        // strokes at their new position, and setIsDrawing(true) drives the isDrawing false->true
+        // transition -- the floating overlay can't repaint live under the pen, so we rely on this
+        // firmware-level refresh path.
+        val result = viewModel.selectionState.applySelectionDisplaceAndCommit(page, history)
         viewModel.selectionState.reset()
         setIsDrawing(true)
+        scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
+
+        if (result == null || (result.strokes.isEmpty() && result.images.isEmpty())) return
+
+        // Then re-select the moved strokes so the pen can drag them again. This is POSTED after a
+        // short settle on purpose: the pen-up refresh above must land, and the isDrawing
+        // true->false transition (which fires the updateIsDrawing() panel kick via the
+        // distinctUntilChanged observer) must complete, BEFORE selectImagesAndStrokes puts the
+        // panel back into selection/animation mode. Done synchronously, the transition conflates
+        // and the re-selected overlay renders at the old position until the next tap.
+        scope.launch(Dispatchers.Main.immediate) {
+            delay(STYLUS_RESELECT_SETTLE_MS)
+            selectImagesAndStrokes(
+                scope = scope,
+                page = page,
+                viewModel = viewModel,
+                imagesToSelect = result.images,
+                strokesToSelect = result.strokes
+            )
+        }
     }
 
     // when selection is moved, we need to redraw canvas
@@ -357,7 +389,7 @@ class EditorControlTower(
     }
 
     /** Commit any pending move, clear the selection, and restore the pre-lasso tool. */
-    private fun deselectAndRestoreTool() {
+    fun deselectAndRestoreTool() {
         applySelectionDisplace()                 // no-op rewrite is skipped when unmoved
         viewModel.selectionState.reset()
         viewModel.onToolbarAction(ToolbarAction.ChangeMode(modeBeforeLasso))

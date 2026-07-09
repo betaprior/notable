@@ -84,9 +84,9 @@ fun SelectedBitmap(
                 }
             }
             .noRippleClickable {
-                controlTower.applySelectionDisplace()
-                selectionState.reset()
-                controlTower.setIsDrawing(true)
+                // Tap outside the selection: commit any pending move, dismiss the selection,
+                // and return to the tool that was active before entering lasso mode.
+                controlTower.deselectAndRestoreTool()
             }) {
         Image(
             bitmap = selectionState.selectedBitmap!!.asImageBitmap(),
@@ -116,14 +116,15 @@ fun SelectedBitmap(
                     ) { change, dragAmount ->
                         dragWasStylus = change.type == PointerType.Stylus
                         change.consume()
+                        // Accumulate onto the selection's live offset (the source of truth), not a
+                        // captured local: after a stylus re-select the pointerInput(Unit) block is
+                        // not torn down, so the local would still hold the previous drag's offset
+                        // and the next drag would jump by that stale amount.
+                        val current = controlTower.page.applyZoom(
+                            selectionState.selectionDisplaceOffset ?: IntOffset(0, 0)
+                        )
                         selectionState.selectionDisplaceOffset =
-                            controlTower.page.removeZoom(
-                                selectionDisplaceOffset + dragAmount.round()
-                            )
-                        selectionDisplaceOffset =
-                            controlTower.page.applyZoom(
-                                selectionState.selectionDisplaceOffset ?: return@detectDragGestures
-                            )
+                            controlTower.page.removeZoom(current + dragAmount.round())
                     }
                 }
                 .combinedClickable(

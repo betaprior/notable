@@ -45,6 +45,17 @@ private val log = ShipBook.getLogger("SelectionState")
  * All coordinate-based properties within this class are intended to be in page coordinates
  * unless otherwise specified.
  */
+/**
+ * Result of committing a selection displacement: the undo operations, plus the strokes and
+ * images as they now exist at the committed (new) position -- callers can hand these straight
+ * back to [selectImagesAndStrokes] to re-select the moved content.
+ */
+data class DisplaceResult(
+    val operations: List<Operation>,
+    val strokes: List<Stroke>,
+    val images: List<Image>,
+)
+
 class SelectionState {
     // all coordinates should be in page coordinates
     var firstPageCut by mutableStateOf<List<SimplePointF>?>(null)
@@ -243,8 +254,10 @@ class SelectionState {
         )
     }
 
-    // Moves strokes, and redraws canvas.
-    fun applySelectionDisplace(page: PageView): List<Operation>? {
+    // Moves strokes, and redraws canvas. Returns the operations plus the strokes/images as
+    // they now exist at the new position (so callers can re-select them, e.g. after a stylus
+    // drag). Returns null when there is nothing to commit.
+    fun applySelectionDisplace(page: PageView): DisplaceResult? {
         log.v("applySelectionDisplace: offset=$selectionDisplaceOffset, mode=$placementMode")
 
         if (selectionDisplaceOffset == null) return null
@@ -259,6 +272,8 @@ class SelectionState {
 
         // collect undo operations for strokes and images together, as a single change
         val operationList = mutableListOf<Operation>()
+        var committedStrokes: List<Stroke> = emptyList()
+        var committedImages: List<Image> = emptyList()
 
         if (!selectedStrokesCopy.isNullOrEmpty()) {
             val displacedStrokes = selectedStrokesCopy.map {
@@ -269,7 +284,7 @@ class SelectionState {
             // with zero offset (select -> deselect, or get/set-width) leaves the strokes
             // exactly as they are -- skip the rewrite so we don't churn ids or re-stream
             // unchanged strokes. Paste always adds the displaced copies.
-            val committedStrokes = when {
+            committedStrokes = when {
                 placementMode == PlacementMode.Paste -> {
                     page.addStrokes(displacedStrokes)
                     displacedStrokes
@@ -296,6 +311,7 @@ class SelectionState {
             if (placementMode == PlacementMode.Move) page.removeImages(selectedImagesCopy.map { it.id })
 
             page.addImage(displacedImages)
+            committedImages = displacedImages
 
             if (offset.x != 0 || offset.y != 0 || placementMode == PlacementMode.Paste) {
                 // TODO: find why sometimes we add two times same operation.
@@ -309,14 +325,13 @@ class SelectionState {
             }
         }
         page.drawAreaPageCoordinates(finalZone)
-        return operationList
+        return DisplaceResult(operationList, committedStrokes, committedImages)
     }
 
-    fun applySelectionDisplaceAndCommit(page: PageView, history: History): Boolean {
-        val operationList = applySelectionDisplace(page)
-        if (operationList.isNullOrEmpty()) return false
-        history.addOperationsToHistory(operationList)
-        return true
+    fun applySelectionDisplaceAndCommit(page: PageView, history: History): DisplaceResult? {
+        val result = applySelectionDisplace(page) ?: return null
+        if (result.operations.isNotEmpty()) history.addOperationsToHistory(result.operations)
+        return result
     }
 
     fun deleteSelectionAndCommit(page: PageView, history: History) {
