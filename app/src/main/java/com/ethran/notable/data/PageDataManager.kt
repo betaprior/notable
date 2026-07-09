@@ -619,6 +619,23 @@ class PageDataManager @Inject constructor(
         }
     }
 
+    /**
+     * Apply an immutable-edit: each [pairs] entry is (oldId, newStroke) where
+     * newStroke carries a fresh id and the new properties. Writes props + id
+     * IN PLACE (same rowid) so draw order and physical locality are preserved
+     * (vs delete+insert). Done in two steps per row: update props at oldId, then
+     * change the id.
+     */
+    fun updateStrokeIdsInDb(pairs: List<Pair<String, Stroke>>) {
+        dataScope.launch {
+            // 1. write the new properties onto the existing rows (still keyed by oldId)
+            appRepository.strokeRepository.update(pairs.map { (oldId, s) -> s.copy(id = oldId) })
+            // 2. rename the ids in place (rowid unchanged)
+            pairs.forEach { (oldId, s) -> appRepository.strokeRepository.changeId(oldId, s.id) }
+            updateParentNotebookTimestamp()
+        }
+    }
+
     fun saveStrokesToDb(strokes: List<Stroke>) {
         dataScope.launch {
             try {

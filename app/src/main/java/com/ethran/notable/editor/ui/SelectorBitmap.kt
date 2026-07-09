@@ -70,7 +70,6 @@ fun SelectedBitmap(
     // on top of the original to be grabbed and dragged blind. Recorded on the Initial pass so it
     // is set before a button's click handler runs.
     var lastPointerStylus by remember { mutableStateOf(false) }
-    var showWidthPicker by remember { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -136,9 +135,9 @@ fun SelectedBitmap(
 
         // TODO: improve this code
 
-        // +2 for the get-width and set-width buttons (strokes only)
+        // +1 for the get-width button (strokes only)
         val hasStrokes = !selectionState.selectedStrokes.isNullOrEmpty()
-        val widthButtons = if (hasStrokes) 2 else 0
+        val widthButtons = if (hasStrokes) 1 else 0
         val buttonCount = (if (selectionState.isResizable()) 7 else 5) + widthButtons
         val toolbarPadding = 4
 
@@ -207,7 +206,9 @@ fun SelectedBitmap(
                         modifier = Modifier.height(BUTTON_SIZE.dp)
                     )
                     if (hasStrokes) {
-                        // Get width: adopt the selection's dominant width into the pen widget.
+                        // Get width: load the selection's dominant width into the toolbar
+                        // width widget (where it, and the picker, can then be applied back
+                        // to the selection). Set is done from the main toolbar widget.
                         ToolbarButton(
                             vectorIcon = FeatherIcons.Crosshair,
                             contentDescription = "get stroke width",
@@ -215,34 +216,6 @@ fun SelectedBitmap(
                             onSelect = { controlTower.getSelectionStrokeWidth() },
                             modifier = Modifier.height(BUTTON_SIZE.dp)
                         )
-                        // Set width: pick S/M/L/XL/C to apply to all selected strokes.
-                        Box {
-                            ToolbarButton(
-                                text = com.ethran.notable.editor.utils.widthLabel(
-                                    controlTower.selectionDominantWidth() ?: 5f
-                                ),
-                                contentDescription = "set stroke width",
-                                isSelected = showWidthPicker,
-                                onSelect = { showWidthPicker = !showWidthPicker },
-                                modifier = Modifier.height(BUTTON_SIZE.dp)
-                            )
-                            if (showWidthPicker) {
-                                androidx.compose.ui.window.Popup(
-                                    onDismissRequest = { showWidthPicker = false },
-                                    properties = androidx.compose.ui.window.PopupProperties(focusable = true),
-                                    alignment = androidx.compose.ui.Alignment.BottomCenter,
-                                ) {
-                                    com.ethran.notable.editor.ui.toolbar.StrokeWidthChips(
-                                        current = controlTower.selectionDominantWidth() ?: -1f,
-                                        lastCustom = controlTower.lastCustomWidth(),
-                                        onPick = { w, c ->
-                                            showWidthPicker = false
-                                            controlTower.setSelectionStrokeWidth(w, c)
-                                        },
-                                    )
-                                }
-                            }
-                        }
                     }
                 }
             }

@@ -23,6 +23,7 @@ import com.ethran.notable.data.CachedBackground
 import com.ethran.notable.data.PageDataManager
 import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.data.datastore.pageWidthPt
+import java.util.UUID
 import com.ethran.notable.data.db.Image
 import com.ethran.notable.data.db.Stroke
 import com.ethran.notable.data.model.BackgroundType
@@ -400,22 +401,26 @@ class PageView(
         )
     }
 
-    // Completely updates strokes
-    fun updateStrokes(strokesToUpdate: List<Stroke>) {
-        // TODO: Clean it up, move some logic to pageDataManager
-        val strokeUpdateById = strokesToUpdate.associateBy { it.id }
-        strokes = strokes.map { stroke ->
-            strokeUpdateById[stroke.id] ?: stroke
-        }
-        updateHeightForChange(strokesToUpdate)
-        pageDataManager.updateStrokesInDb(strokesToUpdate)
+    /**
+     * Immutable-edit update: each incoming stroke carries the OLD id with new
+     * properties (move/resize/re-width). Each gets a FRESH id; the change is
+     * applied in place (same rowid -> draw order + locality preserved) and
+     * mirrored as delete(oldId) + add(newId). Because the ids are DISJOINT, the
+     * delete's reliability repeats can't wipe the re-added stroke. Returns the
+     * new-id strokes so callers can update history and the selection snapshot.
+     */
+    fun updateStrokes(strokesToUpdate: List<Stroke>): List<Stroke> {
+        val pairs = strokesToUpdate.map { it.id to it.copy(id = UUID.randomUUID().toString()) }
+        val newByOldId = pairs.associate { (oldId, s) -> oldId to s }
+        val newStrokes = pairs.map { it.second }
+
+        strokes = strokes.map { newByOldId[it.id] ?: it }
+        updateHeightForChange(newStrokes)
+        pageDataManager.updateStrokeIdsInDb(pairs)
         pageDataManager.indexStrokes(coroutineScope, currentPageId)
-        // Mirror the change (e.g. moving/resizing a selection): remove the old rendering and
-        // re-stream at the new position. Same stroke id, so the group-delete clears every old
-        // fragment and the re-stream draws the updated one.
-        inkStream.deleteStrokes(strokesToUpdate.map { it.id })
-        inkStream.streamCompleteStrokes(strokesToUpdate, streamPageIndex())
-//        persistBitmapDebounced()
+        inkStream.deleteStrokes(pairs.map { it.first }) // old ids; repeats are safe (disjoint)
+        inkStream.streamCompleteStrokes(newStrokes, streamPageIndex())
+        return newStrokes
     }
 
     /**

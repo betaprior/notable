@@ -104,9 +104,9 @@ class SelectionState {
         val bmpBottom = bmpTop + h
 
         // Mirror SelectorBitmap's button-row placement: offset (xPos, -100) from the bitmap.
-        // +2 for the get/set stroke-width buttons shown when strokes are selected.
+        // +1 for the get stroke-width button shown when strokes are selected.
         val buttonCount = (if (isResizable()) 7 else 5) +
-                (if (!selectedStrokes.isNullOrEmpty()) 2 else 0)
+                (if (!selectedStrokes.isNullOrEmpty()) 1 else 0)
         val toolbarPadding = 4
         val xPos = w / 2 - buttonCount * (BUTTON_SIZE + 5 * toolbarPadding)
         val rowWidth = buttonCount * (BUTTON_SIZE + 4 * toolbarPadding)
@@ -265,15 +265,17 @@ class SelectionState {
                 offsetStroke(it, offset = offset.toOffset())
             }
 
-            if (placementMode == PlacementMode.Move) {
+            // Move mints fresh ids (immutable edit); Paste keeps the displaced ids.
+            val committedStrokes = if (placementMode == PlacementMode.Move) {
                 page.updateStrokes(displacedStrokes)
             } else {
                 page.addStrokes(displacedStrokes)
+                displacedStrokes
             }
 
             if (offset.x != 0 || offset.y != 0 || placementMode == PlacementMode.Paste) {
                 // A displacement happened or this is a paste commit - create history for this
-                operationList += Operation.DeleteStroke(displacedStrokes.map { it.id })
+                operationList += Operation.DeleteStroke(committedStrokes.map { it.id })
                 // in case we are on a move operation, this history point re-adds the original strokes
                 if (placementMode == PlacementMode.Move) operationList += Operation.AddStroke(
                     selectedStrokesCopy

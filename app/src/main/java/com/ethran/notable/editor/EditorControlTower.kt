@@ -336,16 +336,16 @@ class EditorControlTower(
 
     /** Set the stroke width of every selected stroke (undoable). */
     fun setSelectionStrokeWidth(width: Float, isCustom: Boolean) {
-        val sel = viewModel.selectionState.selectedStrokes ?: return
-        if (sel.isEmpty()) return
+        val sel = viewModel.selectionState.selectedStrokes
+        if (sel.isNullOrEmpty()) { showHint("No strokes selected"); return }
         val updated = sel.map { com.ethran.notable.editor.utils.setStrokeWidth(it, width) }
-        page.updateStrokes(updated)
-        viewModel.selectionState.selectedStrokes = updated // keep snapshot current
+        val newStrokes = page.updateStrokes(updated) // fresh ids (immutable edit)
+        viewModel.selectionState.selectedStrokes = newStrokes // keep snapshot current
         if (isCustom) viewModel.noteCustomWidth(width)
         history.addOperationsToHistory(
             listOf(
-                Operation.DeleteStroke(updated.map { it.id }),
-                Operation.AddStroke(sel) // undo restores the original widths
+                Operation.DeleteStroke(newStrokes.map { it.id }),
+                Operation.AddStroke(sel) // undo restores the original strokes (old ids + widths)
             )
         )
         scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
@@ -356,15 +356,26 @@ class EditorControlTower(
      * If it isn't a preset it shows as "C" (custom) and becomes the last custom width.
      */
     fun getSelectionStrokeWidth() {
-        val sel = viewModel.selectionState.selectedStrokes ?: return
-        if (sel.isEmpty()) return
+        val sel = viewModel.selectionState.selectedStrokes
+        if (sel.isNullOrEmpty()) {
+            showHint("No strokes selected")
+            return
+        }
         val dominant = sel.groupingBy { it.size }.eachCount()
             .maxByOrNull { it.value }?.key ?: return
+        val label = com.ethran.notable.editor.utils.widthLabel(dominant)
         viewModel.applyPenWidth(
             dominant,
             isCustom = !com.ethran.notable.editor.utils.isPresetWidth(dominant)
         )
-        showHint("Width: ${com.ethran.notable.editor.utils.widthLabel(dominant)}")
+        // Deselect and return to the drawing tool so the user can immediately draw
+        // with the picked-up width -- no extra tap-outside needed.
+        applySelectionDisplace()                 // commit any pending move (no-op here)
+        viewModel.selectionState.reset()
+        viewModel.onToolbarAction(ToolbarAction.ChangeMode(modeBeforeLasso))
+        setIsDrawing(true)
+        scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
+        showHint("Pen width set to $label")
     }
 
     fun duplicateSelection(overlapOriginal: Boolean = false) {

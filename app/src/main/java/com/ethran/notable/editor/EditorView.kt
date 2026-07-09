@@ -163,6 +163,8 @@ fun EditorView(
                     CanvasCommand.ResetView -> editorControlTower.resetZoomAndScroll()
                     is CanvasCommand.SetZoom -> editorControlTower.setZoom(command.level)
                     CanvasCommand.ZoomFitWidth -> editorControlTower.zoomFitWidth()
+                    is CanvasCommand.SetSelectionWidth ->
+                        editorControlTower.setSelectionStrokeWidth(command.width, command.isCustom)
                     CanvasCommand.ClearAllStrokes -> {
                         CanvasEventBus.clearPageSignal.emit(Unit)
                         snackManager.displaySnack(

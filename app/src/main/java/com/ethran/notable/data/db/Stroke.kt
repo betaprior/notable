@@ -71,6 +71,12 @@ interface StrokeDao {
     @Query("DELETE FROM stroke WHERE id IN (:ids)")
     suspend fun deleteAll(ids: List<String>)
 
+    // Change a stroke's id IN PLACE (same rowid) -- preserves draw order and
+    // physical locality, unlike delete+insert. Used for the immutable-edit model
+    // (a property change mints a new id). Safe: nothing foreign-keys to stroke.id.
+    @Query("UPDATE stroke SET id=:newId WHERE id=:oldId")
+    suspend fun changeId(oldId: String, newId: String)
+
     @Transaction
     @Query("SELECT * FROM stroke WHERE id =:strokeId")
     suspend fun getById(strokeId: String): Stroke
@@ -102,6 +108,8 @@ class StrokeRepository @Inject constructor(
             db.deleteAll(batch)
         }
     }
+
+    suspend fun changeId(oldId: String, newId: String) = db.changeId(oldId, newId)
 
     suspend fun getStrokeWithPointsById(strokeId: String): Stroke {
         return db.getById(strokeId)

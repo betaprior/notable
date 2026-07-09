@@ -298,7 +298,7 @@ class InkStreamClient @Inject constructor(
      * leave phantom ink on the mirror that even reloads preserve (erased
      * strokes are absent from uploads, so sync markers never drop them).
      */
-    fun deleteStrokes(strokeIds: List<String>) {
+    fun deleteStrokes(strokeIds: List<String>, repeated: Boolean = true) {
         if (!isEnabled || strokeIds.isEmpty()) return
         // chunk so each datagram stays well under the MTU (2 + 16*n bytes)
         strokeIds.chunked(64).forEach { chunk ->
@@ -307,7 +307,10 @@ class InkStreamClient @Inject constructor(
             val buf = header(MSG_DELETE, 2 + 16 * uuids.size)
             buf.putShort(uuids.size.toShort())
             uuids.forEach { buf.put(it) }
-            enqueueRepeated(buf)
+            // Erase: repeat for reliability. Update (delete-then-re-add): single
+            // shot -- the spaced repeats would arrive AFTER the re-added stroke
+            // and delete it, making updated strokes vanish from the mirror.
+            if (repeated) enqueueRepeated(buf) else enqueue(buf)
         }
     }
 

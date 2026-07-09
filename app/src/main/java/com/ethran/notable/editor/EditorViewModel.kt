@@ -174,6 +174,7 @@ sealed class CanvasCommand {
     object ResetView : CanvasCommand()
     data class SetZoom(val level: Float) : CanvasCommand()
     object ZoomFitWidth : CanvasCommand()
+    data class SetSelectionWidth(val width: Float, val isCustom: Boolean) : CanvasCommand()
     object ClearAllStrokes : CanvasCommand()
     object RefreshCanvas : CanvasCommand()
     data class CopyImageToCanvas(val uri: Uri) : CanvasCommand()
@@ -342,7 +343,12 @@ class EditorViewModel @Inject constructor(
             ToolbarAction.ZoomFitWidth -> sendCanvasCommand(CanvasCommand.ZoomFitWidth)
             ToolbarAction.PreviousPage -> goToPreviousPage()
             ToolbarAction.NextPage -> goToNextPage()
-            is ToolbarAction.SetPenWidth -> applyPenWidth(action.width, action.isCustom)
+            is ToolbarAction.SetPenWidth -> {
+                applyPenWidth(action.width, action.isCustom)
+                // With a selection active, the width widget also applies to it.
+                if (_toolbarState.value.isSelectionActive)
+                    sendCanvasCommand(CanvasCommand.SetSelectionWidth(action.width, action.isCustom))
+            }
             ToolbarAction.ClearAllStrokes -> sendCanvasCommand(CanvasCommand.ClearAllStrokes)
 
             ToolbarAction.NavigateToLibrary -> handleNavigateToLibrary()
