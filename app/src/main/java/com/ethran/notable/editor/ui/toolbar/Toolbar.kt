@@ -39,6 +39,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronLeft
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Clipboard
+import compose.icons.feathericons.Crosshair
 import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.RefreshCcw
 
@@ -308,9 +309,13 @@ fun ToolbarContent(
                     VerticalDivider()
 
                     if (uiState.hasClipboard) {
+                        // While waiting for a paste-target tap the icon becomes a
+                        // crosshair; tapping it again cancels the pending paste.
                         ToolbarButton(
-                            vectorIcon = FeatherIcons.Clipboard,
-                            contentDescription = "paste",
+                            vectorIcon = if (uiState.pastePending) FeatherIcons.Crosshair
+                            else FeatherIcons.Clipboard,
+                            contentDescription = if (uiState.pastePending) "cancel paste" else "paste",
+                            isSelected = uiState.pastePending,
                             onSelect = { onAction(ToolbarAction.Paste) }
                         )
                         VerticalDivider()

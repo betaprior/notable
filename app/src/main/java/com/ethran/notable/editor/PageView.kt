@@ -35,6 +35,8 @@ import com.ethran.notable.editor.drawing.drawBg
 import com.ethran.notable.editor.drawing.drawImage
 import com.ethran.notable.editor.drawing.drawOnCanvasFromPage
 import com.ethran.notable.editor.drawing.drawStroke
+import com.ethran.notable.editor.utils.offsetImage
+import com.ethran.notable.editor.utils.offsetStroke
 import com.ethran.notable.editor.utils.div
 import com.ethran.notable.editor.utils.divideStrokesFromCut
 import com.ethran.notable.editor.utils.loadHQPagePreview
@@ -199,6 +201,24 @@ class PageView(
         color = android.graphics.Color.rgb(0x99, 0x99, 0x99)
         textSize = 28f
         isAntiAlias = true
+    }
+
+    /** Continuous view: ids of strokes/images "lifted" into the floating selection
+     *  overlay -- the compositor SKIPS them so they don't double-draw under the
+     *  floating bitmap. Cleared on commit/deselect via [clearContinuousSelection]. */
+    @Volatile
+    var continuousSelectedStrokeIds: Set<String> = emptySet()
+
+    @Volatile
+    var continuousSelectedImageIds: Set<String> = emptySet()
+
+    /** Drop the lifted-selection ids and repaint (the strokes/images, now committed
+     *  or restored, draw normally again). */
+    fun clearContinuousSelection() {
+        if (continuousSelectedStrokeIds.isEmpty() && continuousSelectedImageIds.isEmpty()) return
+        continuousSelectedStrokeIds = emptySet()
+        continuousSelectedImageIds = emptySet()
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
     }
 
     /** Index of the page occupying the MAJORITY of the viewport (drives the
@@ -547,6 +567,82 @@ class PageView(
         return removed
     }
 
+    /** Continuous view: immutable-edit update (move / re-width) of strokes that may
+     *  live on different pages. Each incoming stroke carries its OLD id with new
+     *  properties; it gets a fresh id, applied in place on its own page (same rowid
+     *  -> draw order preserved), mirrored as delete(old)+add(new) to the stream.
+     *  Returns the new-id strokes (for history + the selection snapshot). */
+    fun updateStrokesOnOwnPages(strokesToUpdate: List<Stroke>): List<Stroke> {
+        val newStrokes = mutableListOf<Stroke>()
+        strokesToUpdate.groupBy { it.pageId }.forEach { (pid, group) ->
+            val pairs = group.map { it.id to it.copy(id = UUID.randomUUID().toString()) }
+            val newByOldId = pairs.associate { (oldId, s) -> oldId to s }
+            pageDataManager.setStrokes(
+                pid, pageDataManager.getStrokes(pid).map { newByOldId[it.id] ?: it }
+            )
+            pageDataManager.updateStrokeIdsInDb(pairs)
+            pageDataManager.indexStrokes(coroutineScope, pid)
+            inkStream.deleteStrokes(pairs.map { it.first }) // old ids; repeats safe (disjoint)
+            val idx = continuousPageIds.indexOf(pid)
+            if (idx >= 0) inkStream.streamCompleteStrokes(pairs.map { it.second }, idx)
+            newStrokes += pairs.map { it.second }
+        }
+        coroutineScope.launch(Dispatchers.Main) { CanvasEventBus.forceUpdate.emit(null) }
+        return newStrokes
+    }
+
+    /** Continuous view: commit a selection MOVE/PASTE that may cross page
+     *  boundaries. [strokes] are the source strokes (own pageId + page-local
+     *  coords); [offset] is the doc-space drag (page units). Each stroke is
+     *  re-assigned to the page its moved CENTRE lands on (whole-stroke -- no
+     *  crossing), rebased to that page's local coords with a fresh id, and
+     *  streamed. When [removeOriginals] (a move), the source strokes are first
+     *  removed from their pages. Returns the placed strokes. */
+    fun placeStrokesContinuous(
+        strokes: List<Stroke>, offset: Offset, removeOriginals: Boolean
+    ): List<Stroke> {
+        if (strokes.isEmpty()) return emptyList()
+        if (removeOriginals) removeStrokesFromOwnPages(strokes.map { it.id })
+        val n = continuousPageIds.size
+        val lastIdx = maxOf(0, n - 1)
+        val placed = strokes.map { s ->
+            val origIdx = continuousPageIds.indexOf(s.pageId).coerceIn(0, lastIdx)
+            val origTop = pageTopDocY(origIdx)
+            val centreDocY = (s.top + s.bottom) / 2f + origTop + offset.y
+            val newIdx = docYToPageIndex(centreDocY).coerceIn(0, lastIdx)
+            val dy = origTop + offset.y - pageTopDocY(newIdx)
+            offsetStroke(s, Offset(offset.x, dy)).copy(
+                id = UUID.randomUUID().toString(),
+                pageId = continuousPageIds[newIdx],
+            )
+        }
+        addStrokesToOwnPages(placed)
+        return placed
+    }
+
+    /** Image counterpart of [placeStrokesContinuous]. */
+    fun placeImagesContinuous(
+        images: List<Image>, offset: Offset, removeOriginals: Boolean
+    ): List<Image> {
+        if (images.isEmpty()) return emptyList()
+        if (removeOriginals) removeImagesFromOwnPages(images.map { it.id })
+        val n = continuousPageIds.size
+        val lastIdx = maxOf(0, n - 1)
+        val placed = images.map { im ->
+            val origIdx = continuousPageIds.indexOf(im.pageId).coerceIn(0, lastIdx)
+            val origTop = pageTopDocY(origIdx)
+            val centreDocY = im.y + im.height / 2f + origTop + offset.y
+            val newIdx = docYToPageIndex(centreDocY).coerceIn(0, lastIdx)
+            val dy = origTop + offset.y - pageTopDocY(newIdx)
+            offsetImage(im, Offset(offset.x, dy)).copy(
+                id = UUID.randomUUID().toString(),
+                pageId = continuousPageIds[newIdx],
+            )
+        }
+        addImagesToOwnPages(placed)
+        return placed
+    }
+
     /** Continuous view: remove strokes from a SPECIFIC page (under the eraser),
      *  not the current page. Streams the deletes; the caller repaints. */
     fun removeStrokesFromPage(pageId: String, strokeIds: List<String>) {
@@ -831,11 +927,12 @@ class PageView(
             )
             val off = Offset(-continuousScrollX, yOff)
             // Images first, then strokes on top (matches the normal render path).
+            // Skip any items lifted into the floating selection overlay.
             pageDataManager.getImages(pageId).forEach { image ->
-                drawImage(context, canvas, image, off)
+                if (image.id !in continuousSelectedImageIds) drawImage(context, canvas, image, off)
             }
             pageDataManager.getStrokes(pageId).forEach { stroke ->
-                drawStroke(canvas, stroke, off)
+                if (stroke.id !in continuousSelectedStrokeIds) drawStroke(canvas, stroke, off)
             }
             // "Page N" label, top-left of the page.
             canvas.drawText("Page ${idx + 1}", 24f - continuousScrollX, yOff + 40f, continuousPageLabelPaint)

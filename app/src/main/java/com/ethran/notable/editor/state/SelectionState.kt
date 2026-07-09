@@ -71,6 +71,11 @@ class SelectionState {
     var selectionRect by mutableStateOf<Rect?>(null)
     var placementMode by mutableStateOf<PlacementMode?>(null)
 
+    // Continuous view: the page the current selection lives on (all selected
+    // strokes/images are local to this page). Null / 0 in single-page mode.
+    var selectionPageId by mutableStateOf<String?>(null)
+    var selectionPageIndex by mutableStateOf(0)
+
     fun reset() {
         log.v("reset")
         selectedStrokes = null
@@ -82,6 +87,8 @@ class SelectionState {
         selectionStartOffset = null
         selectionDisplaceOffset = null
         placementMode = null
+        selectionPageId = null
+        selectionPageIndex = 0
         setAnimationMode(false)
     }
 
@@ -214,13 +221,28 @@ class SelectionState {
         log.v("deleteSelection: images=${selectedImages?.size}, strokes=${selectedStrokes?.size}")
         val operationList = mutableListOf<Operation>()
         val selectedImagesToRemove = selectedImages
+        val selectedStrokesToRemove = selectedStrokes
+        if (page.isContinuous) {
+            // The selected items live on their own page; remove them there (not the
+            // current anchor page). The overlay's lifted ids are dropped below.
+            if (!selectedImagesToRemove.isNullOrEmpty()) {
+                page.removeImagesFromOwnPages(selectedImagesToRemove.map { it.id })
+                operationList += Operation.AddImage(selectedImagesToRemove)
+            }
+            if (!selectedStrokesToRemove.isNullOrEmpty()) {
+                page.removeStrokesFromOwnPages(selectedStrokesToRemove.map { it.id })
+                operationList += Operation.AddStroke(selectedStrokesToRemove)
+            }
+            page.clearContinuousSelection()
+            reset()
+            return operationList
+        }
         if (!selectedImagesToRemove.isNullOrEmpty()) {
             val imageIds: List<String> = selectedImagesToRemove.map { it.id }
             log.i("removing images")
             page.removeImages(imageIds)
             operationList += Operation.AddImage(selectedImagesToRemove)
         }
-        val selectedStrokesToRemove = selectedStrokes
         if (!selectedStrokesToRemove.isNullOrEmpty()) {
             val strokeIds: List<String> = selectedStrokesToRemove.map { it.id }
             log.i("removing strokes")
@@ -274,6 +296,43 @@ class SelectionState {
         val operationList = mutableListOf<Operation>()
         var committedStrokes: List<Stroke> = emptyList()
         var committedImages: List<Image> = emptyList()
+
+        if (page.isContinuous) {
+            // Continuous view: commit against each item's OWN page, re-assigning to
+            // whichever page the moved centre lands on so a drag can cross a page
+            // boundary. Same history shape as the single-page path below.
+            val moved = offset.x != 0 || offset.y != 0
+            if (!selectedStrokesCopy.isNullOrEmpty()) {
+                committedStrokes = when {
+                    placementMode == PlacementMode.Paste ->
+                        page.placeStrokesContinuous(selectedStrokesCopy, offset.toOffset(), removeOriginals = false)
+                    moved ->
+                        page.placeStrokesContinuous(selectedStrokesCopy, offset.toOffset(), removeOriginals = true)
+                    else -> selectedStrokesCopy // select -> deselect unmoved: leave as-is
+                }
+                if (moved || placementMode == PlacementMode.Paste) {
+                    operationList += Operation.DeleteStroke(committedStrokes.map { it.id })
+                    if (placementMode == PlacementMode.Move)
+                        operationList += Operation.AddStroke(selectedStrokesCopy)
+                }
+            }
+            if (!selectedImagesCopy.isNullOrEmpty()) {
+                committedImages = when {
+                    placementMode == PlacementMode.Paste ->
+                        page.placeImagesContinuous(selectedImagesCopy, offset.toOffset(), removeOriginals = false)
+                    moved ->
+                        page.placeImagesContinuous(selectedImagesCopy, offset.toOffset(), removeOriginals = true)
+                    else -> selectedImagesCopy
+                }
+                if (moved || placementMode == PlacementMode.Paste) {
+                    operationList += Operation.DeleteImage(committedImages.map { it.id })
+                    if (placementMode == PlacementMode.Move)
+                        operationList += Operation.AddImage(selectedImagesCopy)
+                }
+            }
+            page.clearContinuousSelection()
+            return DisplaceResult(operationList, committedStrokes, committedImages)
+        }
 
         if (!selectedStrokesCopy.isNullOrEmpty()) {
             val displacedStrokes = selectedStrokesCopy.map {

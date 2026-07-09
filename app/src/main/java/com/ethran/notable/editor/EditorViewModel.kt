@@ -89,6 +89,9 @@ data class ToolbarUiState(
     val penSettings: Map<String, PenSetting> = DEFAULT_PEN_SETTINGS,
     val isSelectionActive: Boolean = false,
     val hasClipboard: Boolean = false,
+    // Target-tap paste: after pressing Paste, wait for a canvas tap that places the
+    // clipboard content at that point (the toolbar icon shows a crosshair meanwhile).
+    val pastePending: Boolean = false,
     val hasDropboxLink: Boolean = false,
     val streamingEnabled: Boolean = false,
     val isDrawing: Boolean = true,
@@ -103,7 +106,7 @@ data class ToolbarUiState(
     val lastCustomWidth: Float = 15f,
 ) {
     val isDrawingAllowed: Boolean
-        get() = !isSelectionActive &&
+        get() = !isSelectionActive && !pastePending &&
                 !(isMenuOpen || isStrokeSelectionOpen || isBackgroundSelectorModalOpen)
                 && !isQuickNavOpen
 }
@@ -344,7 +347,9 @@ class EditorViewModel @Inject constructor(
 
             ToolbarAction.Undo -> sendCanvasCommand(CanvasCommand.Undo)
             ToolbarAction.Redo -> sendCanvasCommand(CanvasCommand.Redo)
-            ToolbarAction.Paste -> sendCanvasCommand(CanvasCommand.Paste)
+            // Target-tap paste: toggle the "waiting for a tap" state instead of
+            // pasting immediately. The canvas tap-catcher (EditorView) does the paste.
+            ToolbarAction.Paste -> _toolbarState.update { it.copy(pastePending = !it.pastePending) }
             ToolbarAction.ResetView -> sendCanvasCommand(CanvasCommand.ResetView)
             is ToolbarAction.SetZoom -> sendCanvasCommand(CanvasCommand.SetZoom(action.level))
             ToolbarAction.ZoomFitWidth -> sendCanvasCommand(CanvasCommand.ZoomFitWidth)
@@ -810,6 +815,10 @@ class EditorViewModel @Inject constructor(
 
     fun setHasClipboard(hasClipboard: Boolean) {
         _toolbarState.update { it.copy(hasClipboard = hasClipboard) }
+    }
+
+    fun setPastePending(pending: Boolean) {
+        _toolbarState.update { it.copy(pastePending = pending) }
     }
 
     fun setShowResetView(showResetView: Boolean) {

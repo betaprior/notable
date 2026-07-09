@@ -1,10 +1,15 @@
 package com.ethran.notable.editor
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +40,23 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 
 private val log = ShipBook.getLogger("EditorView")
+
+/**
+ * Full-screen invisible tap-catcher shown while a paste is "pending" (target-tap
+ * paste). The first tap -- stylus or finger -- reports its screen-px position and
+ * the caller places the clipboard content there. Raw drawing is disabled by the
+ * pastePending state so the tap reaches Compose here.
+ */
+@Composable
+private fun PasteTargetOverlay(onTap: (Offset) -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> onTap(offset) }
+            }
+    )
+}
 
 object EditorDestination : NavigationDestination {
     override val route = "editor"
@@ -271,6 +293,17 @@ fun EditorView(
 
 
 
+        // Target-tap paste: disabling drawing lets the tap-catcher overlay receive
+        // the stylus/finger tap. Toggling the state back on (paste or cancel)
+        // recomputes the drawing state.
+        LaunchedEffect(toolbarState.pastePending) {
+            viewModel.updateDrawingState()
+            if (toolbarState.pastePending)
+                snackManager.displaySnack(
+                    SnackConf(text = "Tap where you want to paste", duration = 2000)
+                )
+        }
+
         InkaTheme {
             EditorGestureReceiver(controlTower = editorControlTower)
             EditorSurface(
@@ -281,6 +314,11 @@ fun EditorView(
             SelectedBitmap(
                 context = context, controlTower = editorControlTower
             )
+            if (toolbarState.pastePending) {
+                PasteTargetOverlay(
+                    onTap = { offset -> editorControlTower.pasteAtPoint(offset) }
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

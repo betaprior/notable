@@ -117,7 +117,22 @@ fun selectImagesAndStrokes(
             -pageBounds.takeTopLeftCornel().toOffset()
         )
     }
-    val startOffset = IntOffset(pageBounds.left, pageBounds.top) - page.scroll.toIntOffset()
+    // Continuous view: the selected items are page-LOCAL to a single page; place the
+    // overlay at that page's on-screen position (page top + doc offset - continuous
+    // scroll) and "lift" the items so the compositor skips them under the float.
+    val continuous = page.isContinuous
+    val selPageId = strokesToSelect.firstOrNull()?.pageId ?: imagesToSelect.firstOrNull()?.pageId
+    val selPageIndex = if (continuous) page.continuousPageIds.indexOf(selPageId).coerceAtLeast(0) else 0
+
+    val startOffset = if (continuous) {
+        val pTop = page.pageTopDocY(selPageIndex)
+        IntOffset(
+            (pageBounds.left - page.continuousScrollX).toInt(),
+            (pageBounds.top + pTop - page.continuousScrollY).toInt()
+        )
+    } else {
+        IntOffset(pageBounds.left, pageBounds.top) - page.scroll.toIntOffset()
+    }
 
     // set state
     viewModel.selectionState.selectedImages = imagesToSelect
@@ -127,7 +142,21 @@ fun selectImagesAndStrokes(
     viewModel.selectionState.selectionStartOffset = startOffset
     viewModel.selectionState.selectionDisplaceOffset = IntOffset(0, 0)
     viewModel.selectionState.placementMode = PlacementMode.Move
+    viewModel.selectionState.selectionPageId = if (continuous) selPageId else null
+    viewModel.selectionState.selectionPageIndex = selPageIndex
     setAnimationMode(true)
+    if (continuous) {
+        // Lift the items and repaint the whole viewport (the compositor is full-redraw
+        // in continuous mode); the floating overlay draws them on top.
+        page.continuousSelectedStrokeIds = strokesToSelect.map { it.id }.toSet()
+        page.continuousSelectedImageIds = imagesToSelect.map { it.id }.toSet()
+        scope.launch {
+            CanvasEventBus.forceUpdate.emit(null)
+            CanvasEventBus.refreshUi.emit(Unit)
+            viewModel.setDrawingStateFromCanvas(false)
+        }
+        return
+    }
     page.drawAreaPageCoordinates(
         pageBounds,
         ignoredImageIds = imagesToSelect.map { it.id },
@@ -137,6 +166,42 @@ fun selectImagesAndStrokes(
         CanvasEventBus.refreshUi.emit(Unit)
         viewModel.setDrawingStateFromCanvas(false)
     }
+}
+
+/**
+ * Continuous view lasso: [docPoints] have page-LOCAL x and DOC y (as produced by
+ * copyInputToSimplePointF with scroll = continuous scroll). Pick the page under the
+ * lasso's vertical centre, translate the path into that page's local coords, and
+ * select from that page's strokes/images. Page-cut selection isn't supported in
+ * continuous mode -- only lasso.
+ */
+fun handleSelectContinuous(
+    scope: CoroutineScope,
+    page: PageView,
+    viewModel: EditorViewModel,
+    docPoints: List<SimplePointF>
+) {
+    if (docPoints.isEmpty()) return
+    val centreY = docPoints.sumOf { it.y.toDouble() }.toFloat() / docPoints.size
+    val idx = page.docYToPageIndex(centreY)
+    val pid = page.continuousPageIds.getOrNull(idx) ?: return
+    val pTop = page.pageTopDocY(idx)
+    val localPoints = docPoints.map { SimplePointF(it.x, it.y - pTop) }
+
+    val selectionPath = pointsToPath(localPoints)
+    selectionPath.close()
+
+    val selectedStrokes = selectStrokesFromPath(page.pageDataManager.getStrokes(pid), selectionPath)
+    val selectedImages = selectImagesFromPath(page.pageDataManager.getImages(pid), selectionPath)
+    if (selectedStrokes.isEmpty() && selectedImages.isEmpty()) return
+
+    selectImagesAndStrokes(
+        scope = scope,
+        page = page,
+        viewModel = viewModel,
+        imagesToSelect = selectedImages,
+        strokesToSelect = selectedStrokes
+    )
 }
 
 

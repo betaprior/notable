@@ -25,6 +25,7 @@ import com.ethran.notable.editor.utils.handleErase
 import com.ethran.notable.editor.utils.handleEraseOnPage
 import com.ethran.notable.editor.utils.handleScribbleToErase
 import com.ethran.notable.editor.utils.handleSelect
+import com.ethran.notable.editor.utils.handleSelectContinuous
 import com.ethran.notable.editor.utils.onSurfaceInit
 import com.ethran.notable.editor.utils.penToStroke
 import com.ethran.notable.editor.utils.setupSurface
@@ -293,6 +294,25 @@ class OnyxInputHandler(
                 // selection popup (SelectedBitmap) recomposes from. Off-main writes can set
                 // the state without triggering recomposition -> lasso draws but no popup.
                 coroutineScope.launch(Dispatchers.Main.immediate) {
+                    if (page.isContinuous) {
+                        // Doc-space lasso: scroll = continuous scroll gives page-local x
+                        // and doc y; handleSelectContinuous routes it to the page under it.
+                        val docPoints = copyInputToSimplePointF(
+                            plist.points,
+                            Offset(page.continuousScrollX, page.continuousScrollY),
+                            page.zoomLevel.value
+                        )
+                        handleSelectContinuous(
+                            scope = coroutineScope,
+                            page = drawCanvas.page,
+                            viewModel = viewModel,
+                            docPoints = docPoints
+                        )
+                        // The lasso just appeared over live firmware ink; a full refresh
+                        // clears the track and shows the lifted/float composite cleanly.
+                        drawCanvas.refreshManager.refreshUi(null)
+                        return@launch
+                    }
                     val points =
                         copyInputToSimplePointF(plist.points, page.scroll, page.zoomLevel.value)
                     handleSelect(

@@ -15,9 +15,13 @@ import com.ethran.notable.editor.state.Mode
 import com.ethran.notable.editor.state.Operation
 import com.ethran.notable.editor.state.PlacementMode
 import com.ethran.notable.editor.state.SelectionState
+import android.graphics.Rect
+import com.ethran.notable.editor.utils.imageBoundsInt
+import com.ethran.notable.editor.utils.offsetImage
 import com.ethran.notable.editor.utils.offsetStroke
 import com.ethran.notable.editor.utils.refreshScreen
 import com.ethran.notable.editor.utils.selectImagesAndStrokes
+import com.ethran.notable.editor.utils.strokeBounds
 import io.shipbook.shipbooksdk.ShipBook
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -376,7 +380,10 @@ class EditorControlTower(
         val sel = viewModel.selectionState.selectedStrokes
         if (sel.isNullOrEmpty()) { showHint("No strokes selected"); return }
         val updated = sel.map { com.ethran.notable.editor.utils.setStrokeWidth(it, width) }
-        val newStrokes = page.updateStrokes(updated) // fresh ids (immutable edit)
+        // Continuous view: the strokes may live on a non-anchor page -- update in place
+        // on each stroke's own page (fresh ids, immutable edit).
+        val newStrokes = if (page.isContinuous) page.updateStrokesOnOwnPages(updated)
+        else page.updateStrokes(updated)
         viewModel.selectionState.selectedStrokes = newStrokes // keep snapshot current
         if (isCustom) viewModel.noteCustomWidth(width)
         history.addOperationsToHistory(
@@ -494,6 +501,69 @@ class EditorControlTower(
         viewModel.selectionState.placementMode = PlacementMode.Paste
 
         showHint("Pasted content from clipboard")
+    }
+
+    /**
+     * Target-tap paste: place the clipboard content so its bounding-box top-left
+     * lands at [tapOffset] (screen px), leave it as an active (Paste-mode) selection,
+     * and clear the pending state. Works in both single-page and continuous mode --
+     * in continuous the tap picks the page, and the whole paste goes onto it.
+     */
+    fun pasteAtPoint(tapOffset: Offset) {
+        viewModel.setPastePending(false)
+        // Commit any selection currently floating before starting a new one.
+        applySelectionDisplace()
+
+        val (strokes, images) = clipboardStore.get() ?: run {
+            showHint("Clipboard is empty"); return
+        }
+        if (strokes.isEmpty() && images.isEmpty()) return
+
+        val now = Date()
+        val zoom = page.zoomLevel.value
+
+        // Bounding box of the clipboard content in its own stored frame.
+        val bbox = Rect()
+        if (strokes.isNotEmpty()) bbox.union(strokeBounds(strokes))
+        if (images.isNotEmpty()) bbox.union(imageBoundsInt(images))
+
+        val targetPageId: String
+        val off: Offset
+        if (page.isContinuous) {
+            val docX = tapOffset.x / zoom + page.continuousScrollX
+            val docY = tapOffset.y / zoom + page.continuousScrollY
+            val idx = page.docYToPageIndex(docY)
+                .coerceIn(0, maxOf(0, page.continuousPageIds.size - 1))
+            targetPageId = page.continuousPageIds.getOrNull(idx) ?: return
+            // Rebase into the target page's LOCAL coords (subtract its doc top).
+            off = Offset(docX - bbox.left, docY - bbox.top - page.pageTopDocY(idx))
+        } else {
+            val pageX = tapOffset.x / zoom + page.scroll.x
+            val pageY = tapOffset.y / zoom + page.scroll.y
+            targetPageId = page.currentPageId
+            off = Offset(pageX - bbox.left, pageY - bbox.top)
+        }
+
+        val pastedStrokes = strokes.map {
+            offsetStroke(it, off).copy(
+                id = UUID.randomUUID().toString(), createdAt = now, pageId = targetPageId
+            )
+        }
+        val pastedImages = images.map {
+            offsetImage(it, off).copy(
+                id = UUID.randomUUID().toString(), createdAt = now, pageId = targetPageId
+            )
+        }
+
+        selectImagesAndStrokes(
+            scope = scope,
+            page = page,
+            viewModel = viewModel,
+            imagesToSelect = pastedImages,
+            strokesToSelect = pastedStrokes
+        )
+        viewModel.selectionState.placementMode = PlacementMode.Paste
+        showHint("Pasted -- drag to place, tap outside to keep")
     }
 
     fun showHint(text: String) = viewModel.showHint(text)
