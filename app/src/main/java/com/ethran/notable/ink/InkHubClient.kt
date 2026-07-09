@@ -64,6 +64,34 @@ object InkHubClient {
             }
         }
 
+    /**
+     * Register this device's FCM token with the hub so the laptop's "Stream from
+     * tablet" can push a wake here. One request per connection, same as openDoc.
+     * Returns true on an "ok" reply.
+     */
+    suspend fun registerPush(
+        host: String, hubPort: Int, token: String, secret: String = "",
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                Socket().use { s ->
+                    s.connect(InetSocketAddress(host, hubPort), CONNECT_TIMEOUT_MS)
+                    s.soTimeout = CONNECT_TIMEOUT_MS
+                    val tk = json.encodeToString(String.serializer(), token)
+                    val sec = if (secret.isBlank()) ""
+                    else ""","secret":${json.encodeToString(String.serializer(), secret)}"""
+                    val req = """{"v":1,"type":"register_push","token":$tk$sec}""" + "\n"
+                    s.getOutputStream().let { it.write(req.toByteArray()); it.flush() }
+                    val line = BufferedReader(InputStreamReader(s.getInputStream())).readLine()
+                        ?: return@withContext false
+                    json.parseToJsonElement(line).jsonObject["type"]
+                        ?.jsonPrimitive?.content == "ok"
+                }
+            } catch (e: Exception) {
+                false
+            }
+        }
+
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 30_000
 }

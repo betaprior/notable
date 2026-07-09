@@ -602,6 +602,15 @@ class EditorViewModel @Inject constructor(
                 fixedPageHeightPt = fixedHeight
             )
         }
+
+        // Laptop-initiated (reverse) streaming: if this notebook was opened by a
+        // "Stream from tablet" request, auto-start streaming now that it's loaded.
+        if (bookId != null &&
+            com.ethran.notable.ink.StreamRequestBus.pendingAutoStreamBookId == bookId
+        ) {
+            com.ethran.notable.ink.StreamRequestBus.pendingAutoStreamBookId = null
+            handleStartStreaming()
+        }
     }
 
     private fun saveToolbarState() {

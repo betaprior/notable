@@ -15,6 +15,7 @@ fragmentKtx = "1.8.9"
 googleDaggerHiltAndroid = "2.60"
 googleDevtoolsKsp = "2.3.9"
 googleFirebase = "22.5.0"
+firebaseMessaging = "24.1.2"
 googleGmsGoogleServices = "4.5.0"
 googleServices = "4.5.0"
 graphicsCore = "1.0.4"
@@ -80,6 +81,7 @@ commons-compress = { group = "org.apache.commons", name = "commons-compress", ve
 feather = { group = "br.com.devsrsouza.compose.icons.android", name = "feather", version.ref = "feather" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-analytics = { group = "com.google.firebase", name = "firebase-analytics-ktx", version.ref = "googleFirebase" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging", version.ref = "firebaseMessaging" }
 fitz = { group = "com.artifex.mupdf", name = "fitz", version.ref = "fitz" }
 google-services = { group = "com.google.gms", name = "google-services", version.ref = "googleServices" }
 hiddenapibypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenapibypass" }

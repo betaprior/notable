@@ -34,7 +34,12 @@ import com.ethran.notable.data.datastore.EditorSettingCacheManager
 import com.ethran.notable.data.datastore.GlobalAppSettings
 import com.ethran.notable.data.db.KvProxy
 import com.ethran.notable.data.db.StrokeMigrationHelper
+import com.ethran.notable.dropbox.DropboxLink
+import com.ethran.notable.dropbox.DropboxManifest
 import com.ethran.notable.editor.canvas.CanvasEventBus
+import com.ethran.notable.ink.InkFcmService
+import com.ethran.notable.ink.StreamRequestBus
+import com.ethran.notable.utils.AppResult
 import com.ethran.notable.io.ExportEngine
 import com.ethran.notable.sync.SyncScheduler
 import com.ethran.notable.ui.AppEventUiBridge
@@ -113,6 +118,18 @@ class MainActivity : ComponentActivity() {
         SCREEN_WIDTH = applicationContext.resources.displayMetrics.widthPixels
         SCREEN_HEIGHT = applicationContext.resources.displayMetrics.heightPixels
 
+        maybeRequestNotificationPermission()
+        registerFcmToken()
+        handleStreamIntent(intent)
+
+        // In-app "stream from laptop?" modal accepted -> resolve/open the doc
+        // (same logic as a notification tap, but no foreground transition).
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                StreamRequestBus.openDocRequests.collect { doc -> handleStreamOpen(doc) }
+            }
+        }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 syncWorkUiBridge.syncUiEvents.collect { event ->
@@ -171,6 +188,92 @@ class MainActivity : ComponentActivity() {
     }
 
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleStreamIntent(intent)
+    }
+
+    /** Fetch this device's FCM token and register it with the hub (no-op if the
+     *  Ink Stream host isn't configured -- see InkFcmService). */
+    private fun registerFcmToken() {
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { token ->
+                    InkFcmService.registerTokenWithHub(applicationContext, token)
+                }
+                .addOnFailureListener { Log.i(TAG, "FCM token fetch failed: ${it.message}") }
+        } catch (e: Exception) {
+            Log.i(TAG, "FCM token registration skipped: ${e.message}")
+        }
+    }
+
+    private fun maybeRequestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val perm = "android.permission.POST_NOTIFICATIONS"
+            if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(perm), 1001)
+            }
+        }
+    }
+
+    /**
+     * Laptop-initiated streaming (reverse): the FCM notification tap delivers a
+     * Dropbox path here. Resolve the notebook (importing from Dropbox if unknown),
+     * then hand it to the nav layer to open + auto-stream (StreamRequestBus).
+     */
+    private fun handleStreamIntent(intent: Intent?) {
+        val doc = intent?.getStringExtra(InkFcmService.EXTRA_STREAM_DOC) ?: return
+        intent.removeExtra(InkFcmService.EXTRA_STREAM_DOC) // consume once
+        handleStreamOpen(doc)
+    }
+
+    /**
+     * Resolve the notebook for [doc] (importing from Dropbox if unknown) and hand
+     * it to the nav layer to open + auto-stream. Shared by the notification tap
+     * and the in-app "stream from laptop?" modal.
+     */
+    private fun handleStreamOpen(doc: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bookRepo = appRepositoryLazy.get().bookRepository
+            val linkUri = DropboxLink.uriFor(doc)
+            var notebook = bookRepo.getByLinkedUri(linkUri)
+            if (notebook == null) {
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(text = "Importing ${doc.substringAfterLast('/')}...", duration = 3000)
+                )
+                val format = if (doc.endsWith(".xopp", true)) "xopp" else "xoj"
+                val title = doc.substringAfterLast('/').removeSuffix(".xoj").removeSuffix(".xopp")
+                val entry = DropboxManifest.ManifestEntry(
+                    dropboxPath = doc, format = format, notebookId = "", title = title
+                )
+                when (val r = dropboxSyncManager.get().downloadAndImport(entry)) {
+                    is AppResult.Success -> notebook = bookRepo.getByLinkedUri(linkUri)
+                    is AppResult.Error -> {
+                        snackDispatcher.showOrUpdateSnack(
+                            SnackConf(text = "Import failed: ${r.error.userMessage}", duration = 5000)
+                        )
+                        return@launch
+                    }
+                }
+            }
+            val nb = notebook ?: run {
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(text = "Could not open $doc", duration = 4000)
+                )
+                return@launch
+            }
+            val pageId = nb.openPageId ?: nb.pageIds.firstOrNull() ?: run {
+                snackDispatcher.showOrUpdateSnack(
+                    SnackConf(text = "Notebook has no pages", duration = 4000)
+                )
+                return@launch
+            }
+            StreamRequestBus.pendingAutoStreamBookId = nb.id
+            StreamRequestBus.postOpen(StreamRequestBus.OpenBook(pageId, nb.id))
+        }
+    }
+
     private fun triggerInitialSync() {
         lifecycleScope.launch {
             try {
@@ -194,6 +297,18 @@ class MainActivity : ComponentActivity() {
                 Log.i(TAG, "Periodic sync reconcile failed: ${e.message}")
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Surface is live -> a stream push can prompt in-app instead of via a
+        // notification (whose tap would cross a background->foreground boundary).
+        StreamRequestBus.appForeground = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        StreamRequestBus.appForeground = false
     }
 
     override fun onRestart() {

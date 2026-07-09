@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:name=".NotableApp"
@@ -26,6 +27,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Inka"
             android:hardwareAccelerated="true">
             <intent-filter>
@@ -49,6 +51,15 @@
                 <data android:scheme="notable" android:host="dropbox-auth" />
             </intent-filter>
         </activity>
+
+        <!-- Reverse initiation: receives the hub's "stream_request" FCM push. -->
+        <service
+            android:name=".ink.InkFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="com.ethran.notable.editor.utils.Provider"

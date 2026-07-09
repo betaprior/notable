@@ -1,36 +1,26 @@
 {
   "project_info": {
-    "project_number": "634526780078",
-    "project_id": "notable-8646f",
-    "storage_bucket": "notable-8646f.appspot.com"
+    "project_number": "70004847642",
+    "project_id": "org-gcal-integration-311905",
+    "storage_bucket": "org-gcal-integration-311905.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:634526780078:android:ba68346a8716b90e74bb3f",
+        "mobilesdk_app_id": "1:70004847642:android:8b9be859bdcb45410ccda3",
         "android_client_info": {
           "package_name": "com.ethran.notable"
         }
       },
-      "oauth_client": [
-        {
-          "client_id": "634526780078-ar9i7bnc56j6vga7hfcac2fi3oimfclv.apps.googleusercontent.com",
-          "client_type": 3
-        }
-      ],
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCjSDla-rTYvO_wuMBo2pFIjJTKWjQuAHk"
+          "current_key": "AIzaSyDogFhzpeFtzpxzao7KAiMCqe_te4hHIkE"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": [
-            {
-              "client_id": "634526780078-ar9i7bnc56j6vga7hfcac2fi3oimfclv.apps.googleusercontent.com",
-              "client_type": 3
-            }
-          ]
+          "other_platform_oauth_client": []
         }
       }
     }
