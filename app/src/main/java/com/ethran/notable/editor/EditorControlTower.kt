@@ -400,6 +400,15 @@ class EditorControlTower(
         showHint("Stroke width set to $label")
     }
 
+    /** Commit any floating selection (writes a pending move) and clear it, without
+     *  touching the current tool -- used when the user switches tools directly. */
+    fun commitAndClearSelection() {
+        if (!viewModel.selectionState.isNonEmpty()) return
+        viewModel.selectionState.applySelectionDisplaceAndCommit(page, history)
+        viewModel.selectionState.reset()
+        scope.launch { CanvasEventBus.refreshUi.emit(Unit) }
+    }
+
     /** Commit any pending move, clear the selection, and restore the pre-lasso tool. */
     fun deselectAndRestoreTool() {
         applySelectionDisplace()                 // no-op rewrite is skipped when unmoved

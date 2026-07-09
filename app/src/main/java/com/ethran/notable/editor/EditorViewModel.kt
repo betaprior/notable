@@ -185,6 +185,10 @@ sealed class CanvasCommand {
     object ClearAllStrokes : CanvasCommand()
     object RefreshCanvas : CanvasCommand()
 
+    /** Commit any floating selection (writes a pending move) and clear it -- used
+     *  when switching tools so drawing/erasing isn't left disabled. */
+    object CommitSelection : CanvasCommand()
+
     /** Continuous view: displace the viewport by one page (+1 next, -1 prev). */
     data class ShiftContinuousViewport(val dir: Int) : CanvasCommand()
     data class CopyImageToCanvas(val uri: Uri) : CanvasCommand()
@@ -309,7 +313,12 @@ class EditorViewModel @Inject constructor(
             }
 
             is ToolbarAction.ChangeMode -> {
-                _toolbarState.update { it.copy(mode = action.mode) }
+                // Leaving the current tool: finalize any floating selection and cancel
+                // a pending paste. Otherwise isSelectionActive / pastePending keep
+                // isDrawingAllowed false and the new tool (e.g. eraser) gets no input.
+                if (_toolbarState.value.isSelectionActive)
+                    sendCanvasCommand(CanvasCommand.CommitSelection)
+                _toolbarState.update { it.copy(mode = action.mode, pastePending = false) }
                 updateDrawingState()
                 saveToolbarState()
             }

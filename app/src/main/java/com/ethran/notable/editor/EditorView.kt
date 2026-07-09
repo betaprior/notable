@@ -199,6 +199,8 @@ fun EditorView(
                         )
                     }
 
+                    CanvasCommand.CommitSelection -> editorControlTower.commitAndClearSelection()
+
                     CanvasCommand.RefreshCanvas -> {
                         CanvasEventBus.reloadFromDb.emit(Unit)
                     }
