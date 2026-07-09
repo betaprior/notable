@@ -181,7 +181,11 @@ class PageDataManager @Inject constructor(
                     existing
                 }
 
-                existing?.isCompleted == true -> {
+                // NOTE: a CANCELLED job is also isCompleted==true, so it must be
+                // excluded here -- otherwise a load cancelled by a concurrent
+                // open/nav race is mistaken for "already loaded" and the page is
+                // never reloaded (blank until a swipe clears the stale job).
+                existing != null && existing.isCompleted && !existing.isCancelled -> {
                     log.d("Page($pageId) already in memory, stroke number ${strokes[pageId]?.size}")
                     existing
                 }
@@ -926,15 +930,15 @@ class PageDataManager @Inject constructor(
     @Volatile
     private var currentCacheSizeMB = 0
 
-    fun removePage(pageId: String): Boolean {
+    fun removePage(pageId: String, protectedPage: String = currentPage): Boolean {
         log.d("Removing page $pageId")
-        if (pageId == currentPage) {
-            appEventBus.tryEmit(
-                AppEvent.LogMessage(
-                    reason = "PageDataManager.removePage",
-                    message = "Cannot remove current page, there is a bug in code"
-                )
-            )
+        // Never evict the page being viewed. currentPage is a computed property
+        // (pageFromDb.id) NOT guarded by accessLock, so it can shift under a
+        // concurrent reduceCache during a fast page open -- callers pass a
+        // snapshot and we also re-check the live value. Hitting this is a benign
+        // race (skip and let a later reduceCache retry), NOT a user-facing bug.
+        if (pageId == protectedPage || pageId == currentPage) {
+            log.w("Skipping removal of current page $pageId (reduceCache/open race)")
             return false
         }
         synchronized(accessLock) {
@@ -969,6 +973,15 @@ class PageDataManager @Inject constructor(
      */
     fun cancelLoadingPage(pageId: String) {
         dataLoadingScope.launch {
+            // Never cancel the load of the page currently being viewed. During an
+            // editor->editor open (e.g. a new stream request while already in the
+            // editor) the OLD editor's disposeOldPage runs AFTER currentPage has
+            // advanced to the NEW page, and cancelling it here left the new page
+            // blank ("Inconsistent state" + no render).
+            if (pageId == currentPage) {
+                log.w("Not cancelling load of current page $pageId (editor open race)")
+                return@launch
+            }
             log.d("Cancelling loading page: pageId=$pageId")
             jobLock.withLock {
                 if (dataLoadingJobs[pageId]?.isActive == true) {
@@ -985,7 +998,11 @@ class PageDataManager @Inject constructor(
      */
     fun cancelLoadingPages(ignoredPageIds: List<String> = listOf()) {
         dataLoadingScope.launch {
-            log.d("Cancelling loading pages, ignoring: $ignoredPageIds")
+            // Always protect the current page: a background library/folder refresh
+            // (LibraryViewModel.loadFolder passes no ignore list) must not cancel
+            // the active editor's in-flight load.
+            val protect = ignoredPageIds + currentPage
+            log.d("Cancelling loading pages, ignoring: $protect")
             val toCancel: List<String>
             jobLock.withLock {
                 // Collect all pageIds with jobs that are not finished
@@ -995,7 +1012,7 @@ class PageDataManager @Inject constructor(
             }
             // Cancel and remove pages outside the lock
             for (pageId in toCancel) {
-                if (ignoredPageIds.contains(pageId)) continue
+                if (protect.contains(pageId)) continue
                 val job = jobLock.withLock { dataLoadingJobs[pageId] }
                 if (job != null && job.isActive) {
                     job.cancel()
@@ -1035,16 +1052,24 @@ class PageDataManager @Inject constructor(
     fun reduceCache(maxPages: Int) {
         log.d("reduceCache($maxPages)")
         synchronized(accessLock) {
+            // Snapshot the current page ONCE: it's a computed property that the
+            // navigation thread can change mid-loop, which used to make us try to
+            // evict the just-opened page (blank page + a spurious "bug" popup).
+            val protectedPage = currentPage
             while (strokes.size > maxPages) {
-                // Find the first page in the LinkedHashMap that isn't the current page
-                val pageToRemove = strokes.keys.firstOrNull { it != currentPage }
+                // Skip both the snapshot and the live current page.
+                val pageToRemove = strokes.keys.firstOrNull {
+                    it != protectedPage && it != currentPage
+                }
                 if (pageToRemove == null) {
-                    log.d("ReduceCache: nothing to remove, current page is the only one")
+                    log.d("ReduceCache: nothing to remove but the current page")
                     break // Only the current page is left, we can't reduce further
                 }
                 log.d("Clearing page (oldest) $pageToRemove, requested by reduceCache")
-                if (!removePage(pageToRemove)) {
-                    log.e("Illegal state: Could not remove page $pageToRemove")
+                if (!removePage(pageToRemove, protectedPage)) {
+                    // The page became current between selection and removal -- a
+                    // benign race; stop and let a later reduceCache try again.
+                    log.d("reduceCache: $pageToRemove became current; stopping this pass")
                     break
                 }
             }
