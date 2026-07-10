@@ -10,3 +10,7 @@
 local.properties
 .claude-context.md
 comments.md
+
+# Firebase config carries an API key -- keep it out of git (see google-services.json.example)
+app/google-services.json
+app/google-services.json.upstream-bak

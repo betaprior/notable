@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "70004847642",
-    "project_id": "org-gcal-integration-311905",
-    "storage_bucket": "org-gcal-integration-311905.firebasestorage.app"
+    "project_number": "YOUR_PROJECT_NUMBER",
+    "project_id": "YOUR_PROJECT_ID",
+    "storage_bucket": "YOUR_PROJECT_ID.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:70004847642:android:8b9be859bdcb45410ccda3",
+        "mobilesdk_app_id": "YOUR_MOBILESDK_APP_ID",
         "android_client_info": {
           "package_name": "com.ethran.notable"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDogFhzpeFtzpxzao7KAiMCqe_te4hHIkE"
+          "current_key": "YOUR_ANDROID_API_KEY"
         }
       ],
       "services": {
